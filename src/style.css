@@ -149,6 +149,36 @@ button { cursor: pointer; }
 .car-form select { max-width: 200px; }
 .car-form .btn { align-self: flex-start; height: 34px; font-size: 13px; }
 
+/* ---------- Añadir a inicio ---------- */
+.install { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 8px 10px 14px; background: var(--accent); color: var(--accent-ink); }
+.install > svg { width: 26px; height: 26px; flex: none; }
+.i-text { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; line-height: 1.3; }
+.i-text b { font-size: 14px; }
+.install .btn { height: 34px; flex: none; background: var(--surface); color: var(--accent); border-color: transparent; }
+.i-close { flex: none; width: 34px; height: 34px; border: 0; background: none; color: inherit; display: grid; place-items: center; opacity: .85; }
+.i-close svg { width: 18px; height: 18px; }
+.steps ol { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 12px; font-size: 15px; }
+.steps p { margin: 0 0 10px; }
+.steps .ico { width: 22px; height: 22px; vertical-align: -5px; color: var(--accent); margin: 0 2px; }
+.steps .url { font-family: var(--f-mono); font-size: 12.5px; word-break: break-all; user-select: all; background: var(--surface-2); padding: 2px 6px; border-radius: 4px; }
+.steps .hint { margin-top: 12px; }
+
+/* ---------- Precios actualizados ---------- */
+.updated { flex: none; padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.u-row { display: flex; align-items: center; gap: 10px; }
+.u-row > svg { width: 22px; height: 22px; flex: none; color: var(--cheap); }
+.updated.stale .u-row > svg { color: var(--mid); }
+.u-text { margin: 0; flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; font-size: 13.5px; }
+.u-label { width: 100%; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.u-text b { font-weight: 600; }
+.u-ago { color: var(--muted); }
+.updated.stale .u-ago { color: var(--mid); font-weight: 600; }
+.u-row .btn { height: 34px; flex: none; font-size: 13.5px; }
+.u-row .btn:disabled { opacity: .6; cursor: progress; }
+.u-how summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 13px; }
+.u-how ul { margin: 8px 0 2px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink); }
+.d-change { margin: 0; font-size: 13.5px; padding: 8px 10px; background: var(--surface-2); border-radius: 8px; }
+
 .notice { flex: none; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; background: var(--warn-bg); color: var(--warn-ink); font-size: 13.5px; border-bottom: 1px solid var(--line); }
 .notice .link { color: var(--warn-ink); flex: none; }
 

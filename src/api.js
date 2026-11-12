@@ -100,12 +100,14 @@ export function parseFecha(s) {
 
 /**
  * Precios actuales de un combustible en toda España.
- * @returns {Promise<{fecha: string, prices: Map<string, number>, fromCache: boolean}>}
+ * `fecha` es la hora a la que el Ministerio generó la respuesta (la de la consulta, no la del
+ * último cambio de cada gasolinera); `fetchedAt` es cuándo los descargó esta web.
+ * @returns {Promise<{fecha: string, prices: Map<string, number>, fromCache: boolean, fetchedAt: number}>}
  */
 export async function loadFuel(fuelId, { force = false } = {}) {
   const cached = store.get(keyFuel(fuelId));
   if (!force && cached && Date.now() - cached.t < CACHE_TTL && cached.p.every(([id]) => catalog.has(id))) {
-    return { fecha: cached.fecha, prices: new Map(cached.p), fromCache: true };
+    return { fecha: cached.fecha, prices: new Map(cached.p), fromCache: true, fetchedAt: cached.t };
   }
   const data = await getJSON(`EstacionesTerrestres/FiltroProducto/${fuelId}`);
   const prices = new Map();
@@ -118,8 +120,9 @@ export async function loadFuel(fuelId, { force = false } = {}) {
     prices.set(s.id, p);
   }
   saveCatalog();
-  store.set(keyFuel(fuelId), { t: Date.now(), fecha: data.Fecha, p: [...prices] });
-  return { fecha: data.Fecha, prices, fromCache: false };
+  const fetchedAt = Date.now();
+  store.set(keyFuel(fuelId), { t: fetchedAt, fecha: data.Fecha, p: [...prices] });
+  return { fecha: data.Fecha, prices, fromCache: false, fetchedAt };
 }
 
 // ---------- Histórico ----------

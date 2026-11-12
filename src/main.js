@@ -5,6 +5,7 @@ import { FUELS, fuelById, catalog, loadFuel, provinceHistory, stationHistory, se
 import { openStatus } from './horario.js';
 import { SANDERO, GLP, tankFor, consFor, costPer100, rangeKm, netSaving, sanitizeCar } from './car.js';
 import { OFFERS, VERIFIED, activeOffers, offerMatches, isExpired, fmtDate } from './offers.js';
+import { lastPriceChange, daysAgoText, minutesAgoText } from './history.js';
 
 // ======================= Preferencias (solo en este navegador) =======================
 const PREFS_KEY = 'surtidor:v1:prefs';
@@ -348,10 +349,10 @@ function update() {
   $('fav-count').textContent = favs.size ? `(${favs.size})` : '';
   const prim = fuelData.get(prefs.primary);
   if (prim) {
-    const f = parseFecha(prim.fecha).text;
     const n = list.length;
-    setStatus(`${n === 250 ? 'Más de 250' : n} gasolinera${n === 1 ? '' : 's'} con ${fuelById(prefs.primary).long} a menos de ${prefs.radius} km · Ministerio, ${f}`);
+    setStatus(`${n === 250 ? 'Más de 250' : n} gasolinera${n === 1 ? '' : 's'} con ${fuelById(prefs.primary).long} a menos de ${prefs.radius} km`);
   }
+  renderUpdated();
   renderCarStrip();
   renderList(); renderMarkers();
   computeFlags(list);
@@ -546,6 +547,7 @@ function renderDetail(id, loadHistory) {
       <p>${esc(s.addr)}<br>${esc(s.cp)} ${esc(s.loc)} (${esc(s.prov)})${dist != null ? ` · <span class="num">${fmtKm(dist)}</span>` : ''}</p>
     </div>
     <div class="totem" aria-label="Precios">${rows}</div>
+    ${pPrim ? `<p class="d-change" id="d-change">Último cambio de precio (${esc(fuelById(prefs.primary).label)}): consultando el histórico…</p>` : ''}
     ${fl.map(f => `<div class="warn"><strong>Revisa este precio</strong>${esc(f.text)}</div>`).join('')}
     ${activeOffers().filter(o => offerMatches(o, s.name) && !hasOffer(o.id)).map(o => `<div class="d-offer"><p class="eyebrow">Oferta en esta gasolinera</p>${offerCard(o, true)}</div>`).join('')}
     ${carSection(s)}
@@ -565,7 +567,7 @@ function renderDetail(id, loadHistory) {
   });
   $('d-car-edit')?.addEventListener('click', openSettings);
   if (pPrim && loadHistory) loadHist(s, prefs.primary, pPrim);
-  else if (pPrim && lastHist?.id === id && lastHist.fuel === prefs.primary) drawHist(lastHist.series);
+  else if (pPrim && lastHist?.id === id && lastHist.fuel === prefs.primary) { drawHist(lastHist.series); drawChange(lastHist.series); }
 }
 
 /** Lo que te cuesta tu coche en esta gasolinera: llenar cada depósito, coste por 100 km y autonomía. */
@@ -592,14 +594,28 @@ function carSection(s) {
 }
 
 let lastHist = null;
+function drawChange(series) {
+  const el = $('d-change');
+  if (!el) return;
+  const c = lastPriceChange(series);
+  const label = esc(fuelById(prefs.primary).label);
+  const dm = d => d.toLocaleDateString('es-ES', { timeZone: 'Europe/Madrid', weekday: 'long', day: 'numeric', month: 'numeric' });
+  if (!c) { el.textContent = `Último cambio de precio (${fuelById(prefs.primary).label}): el Ministerio no tiene histórico de esta estación.`; return; }
+  el.innerHTML = c.unchanged
+    ? `<b>Precio de ${label} sin cambios</b> en los últimos ${c.days} días. Si te parece raro, confírmalo en el surtidor.`
+    : `<b>Último cambio de precio (${label}): ${esc(daysAgoText(c.date))}</b>, ${esc(dm(c.date))}. Pasó de ${priceText(c.from)} a ${priceText(c.to)} €/L.`;
+}
+
 async function loadHist(s, fuel, current) {
   try {
-    const series = await stationHistory(s, fuel);
+    // Diario: permite fechar el último cambio de precio (30 peticiones pequeñas al Ministerio, en caché).
+    const series = await stationHistory(s, fuel, { days: 30, step: 1 });
     series.push({ date: new Date(), price: current });
     lastHist = { id: s.id, fuel, series };
-    if (activeId === s.id) drawHist(series);
+    if (activeId === s.id) { drawHist(series); drawChange(series); }
   } catch {
     if (activeId === s.id && $('d-hist')) $('d-hist').innerHTML = '<p class="src">No se pudo cargar el histórico ahora mismo.</p>';
+    if (activeId === s.id && $('d-change')) $('d-change').textContent = 'No se pudo consultar el histórico ahora mismo.';
   }
 }
 
@@ -775,5 +791,109 @@ ensureFuel(prefs.primary).then(() => {
   for (const f of new Set([...prefs.fuels, GLP, car().gasFuel])) if (f !== prefs.primary) ensureFuel(f).then(update).catch(() => {});
 }).catch(() => {});
 
-// Refresca los precios cada 30 minutos si la pestaña sigue abierta.
-setInterval(() => { for (const f of prefs.fuels) ensureFuel(f, { force: true }).then(update).catch(() => {}); }, 30 * 60 * 1000);
+// ======================= Añadir a la pantalla de inicio =======================
+// iOS no permite instalar desde un botón (no existe beforeinstallprompt en Safari): el botón muestra
+// los pasos exactos para el navegador que se esté usando. En Android/Chrome/Edge instala de verdad.
+const UA = navigator.userAgent;
+const isIOS = /iPhone|iPad|iPod/.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
+const isInApp = /FBAN|FBAV|Instagram|Line\/|GSA\/|TikTok|Twitter/i.test(UA);
+const iosBrowser = /CriOS/.test(UA) ? 'Chrome' : /FxiOS/.test(UA) ? 'Firefox' : /EdgiOS/.test(UA) ? 'Edge' : 'Safari';
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const INSTALL_KEY = 'surtidor:v1:install-dismissed';
+let installPrompt = null;
+
+const ICON_SHARE = '<svg class="ico" viewBox="0 0 24 24" aria-label="Compartir"><path d="M12 3v12M8 7l4-4 4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+const ICON_ADD = '<svg class="ico" viewBox="0 0 24 24" aria-label="Añadir"><rect x="4" y="4" width="16" height="16" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+const ICON_DOTS = '<svg class="ico" viewBox="0 0 24 24" aria-label="Menú"><circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/></svg>';
+
+function installSteps() {
+  const url = location.href.split('#')[0];
+  const ol = items => `<ol>${items.map(i => `<li>${i}</li>`).join('')}</ol>`;
+  if (isIOS && isInApp) {
+    return `<p>Ahora mismo estás dentro de otra app (por ejemplo Instagram o Google). Desde ahí no se puede añadir a la pantalla de inicio.</p>
+      ${ol([`Abre esta página en <b>Safari</b>: toca el menú de la app (${ICON_DOTS} o la brújula) y elige «Abrir en Safari».`,
+        'Cuando esté abierta en Safari, vuelve a pulsar «Añadir».'])}
+      <p class="hint">O copia la dirección y pégala en Safari: <span class="url">${esc(url)}</span></p>`;
+  }
+  if (isIOS) {
+    const where = iosBrowser === 'Safari' ? 'en la barra de abajo de Safari (en iPad, arriba a la derecha)' : `en la barra de direcciones de ${iosBrowser}, arriba a la derecha`;
+    return ol([
+      `Pulsa el botón <b>Compartir</b> ${ICON_SHARE} ${where}.`,
+      `Baja en el menú y toca <b>«Añadir a pantalla de inicio»</b> ${ICON_ADD}. Si no aparece, toca «Editar acciones» al final de la lista y actívalo.`,
+      'Pulsa <b>«Añadir»</b> arriba a la derecha. Aparecerá el icono de Surtidor junto a tus apps.',
+    ]) + '<p class="hint">Se abrirá a pantalla completa, como una app, y conservará tu coche, tus favoritas y tus ofertas.</p>';
+  }
+  return ol([
+    `Abre el menú del navegador ${ICON_DOTS} (arriba a la derecha).`,
+    'Toca <b>«Instalar aplicación»</b> o <b>«Añadir a pantalla de inicio»</b>.',
+    'Confirma. Aparecerá el icono de Surtidor junto a tus apps.',
+  ]);
+}
+function renderInstall() {
+  let dismissed = false;
+  try { dismissed = !!localStorage.getItem(INSTALL_KEY); } catch { /* sin almacenamiento */ }
+  const mobile = window.matchMedia('(pointer: coarse)').matches;
+  $('install').hidden = isStandalone() || dismissed || !(mobile || installPrompt);
+}
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; renderInstall(); });
+window.addEventListener('appinstalled', () => { installPrompt = null; $('install').hidden = true; });
+$('install-btn').addEventListener('click', async () => {
+  if (installPrompt && !isIOS) {
+    try {
+      await installPrompt.prompt();
+      const { outcome } = await installPrompt.userChoice;
+      if (outcome === 'accepted') $('install').hidden = true;
+      installPrompt = null;
+      return;
+    } catch { /* el navegador no dejó instalar: se muestran los pasos a mano */ }
+  }
+  $('install-steps').innerHTML = installSteps();
+  $('install-dlg').showModal();
+});
+$('install-dismiss').addEventListener('click', () => {
+  try { localStorage.setItem(INSTALL_KEY, new Date().toISOString()); } catch { /* sin almacenamiento */ }
+  $('install').hidden = true;
+});
+renderInstall();
+
+// ======================= Actualización de precios =======================
+const REFRESH_MS = 30 * 60 * 1000;
+const fmtWhen = t => new Intl.DateTimeFormat('es-ES', {
+  timeZone: 'Europe/Madrid', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+}).format(t).replace(/^./, c => c.toUpperCase()).replace(/,? (\d{1,2}:\d{2})$/, ' a las $1');
+/** Hora de la descarga más antigua entre los combustibles en uso: la que manda. */
+function oldestFetch() {
+  const ts = [...new Set([...prefs.fuels, GLP, car().gasFuel])].map(f => fuelData.get(f)?.fetchedAt).filter(Boolean);
+  return ts.length ? Math.min(...ts) : null;
+}
+let refreshing = false;
+function renderUpdated() {
+  const t = oldestFetch();
+  const btn = $('u-refresh');
+  btn.disabled = refreshing;
+  btn.textContent = refreshing ? 'Actualizando…' : 'Actualizar';
+  if (!t) return;
+  const age = Date.now() - t;
+  $('u-when').textContent = fmtWhen(t);
+  $('u-ago').textContent = `(${minutesAgoText(age)})`;
+  $('updated').classList.toggle('stale', age > REFRESH_MS);
+}
+async function refreshAll() {
+  if (refreshing) return;
+  refreshing = true; renderUpdated();
+  const fuels = [...new Set([...prefs.fuels, GLP, car().gasFuel])];
+  const res = await Promise.allSettled(fuels.map(f => ensureFuel(f, { force: true })));
+  refreshing = false;
+  update();
+  if (res.some(r => r.status === 'rejected')) setStatus('No se pudieron descargar todos los precios. Se muestran los últimos que tenías; vuelve a intentarlo en un momento.', true);
+  if (activeId) renderDetail(activeId, false);
+}
+$('u-refresh').addEventListener('click', refreshAll);
+setInterval(renderUpdated, 30 * 1000);                       // el «hace X min» se mantiene al día
+setInterval(refreshAll, REFRESH_MS);                         // cada 30 min con la web abierta
+document.addEventListener('visibilitychange', () => {        // al volver a la app desde la pantalla de inicio
+  if (document.visibilityState === 'visible') {
+    const t = oldestFetch();
+    if (t && Date.now() - t > REFRESH_MS) refreshAll(); else renderUpdated();
+  }
+});

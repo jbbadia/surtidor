@@ -7,6 +7,12 @@
   <meta name="description" content="Compara el precio del GLP y la gasolina en todas las gasolineras de España con los datos oficiales del Ministerio. Sin anuncios y sin registro.">
   <meta name="theme-color" content="#1f56a8">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Surtidor">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
@@ -54,7 +60,32 @@
         <button role="tab" id="tab-near" aria-selected="true" aria-controls="list">Cerca de <span id="place-label">…</span></button>
         <button role="tab" id="tab-fav" aria-selected="false" aria-controls="list">Favoritas <span id="fav-count" class="count"></span></button>
       </div>
+      <div class="install" id="install" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v6M9 11h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <div class="i-text"><b>Añádela a tu pantalla de inicio</b><span>Se abre como una app, con su icono.</span></div>
+        <button type="button" class="btn primary" id="install-btn">Añadir</button>
+        <button type="button" class="i-close" id="install-dismiss" aria-label="Ahora no">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
       <div class="notice" id="notice" role="status" hidden><span id="notice-text"></span><button type="button" class="link" id="notice-close">Entendido</button></div>
+      <section class="updated" id="updated" aria-label="Actualización de precios">
+        <div class="u-row">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3.5 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <p class="u-text"><span class="u-label">Precios actualizados</span><b id="u-when">cargando…</b><span id="u-ago" class="u-ago"></span></p>
+          <button type="button" class="btn" id="u-refresh">Actualizar</button>
+        </div>
+        <details class="u-how">
+          <summary>¿Cómo se actualizan los precios?</summary>
+          <ul>
+            <li><b>Las gasolineras se los comunican al Ministerio</b> cada vez que cambian un precio, y como mínimo todos los lunes. Es obligatorio por ley y la CNMC vigila que lo cumplan.</li>
+            <li><b>El Ministerio los publica al momento</b> en su base de datos oficial y gratuita, que es de donde los saca esta web.</li>
+            <li><b>Esta web los descarga</b> al abrirla, cada 30 minutos mientras la tienes abierta, cuando vuelves a ella tras un rato y cuando pulsas «Actualizar». La hora de arriba es la de esa descarga.</li>
+            <li><b>El Ministerio no dice a qué hora cambió cada gasolinera su precio.</b> Por eso, en la ficha de cada una verás el día de su último cambio, sacado de su histórico diario.</li>
+            <li>Si una gasolinera no avisa de un cambio, aquí seguirá su precio antiguo. Cuando lo sospechamos lo marcamos con «Revisar precio».</li>
+          </ul>
+        </details>
+      </section>
       <div class="car" id="car-strip" hidden></div>
       <p class="status" id="status" aria-live="polite">Cargando precios del Ministerio…</p>
       <ol class="list" id="list"></ol>
@@ -98,6 +129,14 @@
         <button type="button" id="disc-add" class="btn">Añadir</button>
       </fieldset>
       <div class="settings-actions"><button class="btn primary" value="ok">Hecho</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="install-dlg" aria-labelledby="i-title">
+    <form method="dialog" class="settings">
+      <h2 id="i-title">Añadir a la pantalla de inicio</h2>
+      <div id="install-steps" class="steps"></div>
+      <div class="settings-actions"><button class="btn primary" value="ok">Entendido</button></div>
     </form>
   </dialog>
 

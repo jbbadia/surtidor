@@ -29,6 +29,21 @@ Con eso la web muestra:
 
 Si sabes tu consumo real (mira el ordenador de a bordo), cámbialo: será más exacto que el homologado.
 
+## Cómo se actualizan los precios
+
+- Las gasolineras están obligadas a comunicar sus precios al Ministerio cada vez que los cambian y, como mínimo, cada lunes (Orden ITC/2308/2007). La CNMC vigila que lo cumplan.
+- El Ministerio los publica en su API al momento. El campo `Fecha` de la API es la hora de la consulta, no la del último cambio.
+- La web los descarga al abrirla, cada 30 minutos mientras está abierta, al volver a ella tras más de 30 minutos y con el botón «Actualizar». El recuadro «Precios actualizados» muestra el día y la hora de esa descarga.
+- El Ministerio no da la hora del cambio de cada gasolinera. La ficha calcula el **día del último cambio** a partir del histórico diario (`src/history.js`).
+
+## Instalar en el móvil
+
+Es una web instalable (`public/manifest.webmanifest` y los iconos). El banner «Añádela a tu pantalla de inicio»:
+- **En iPhone:** muestra los pasos exactos para Safari, Chrome, Edge o Firefox, porque iOS no permite instalar con un botón. Si estás dentro de otra app, como Instagram, te pide abrirla primero en Safari.
+- **En Android, Chrome y Edge:** instala directamente.
+
+No aparece si ya está abierta como app ni si pulsaste «Ahora no».
+
 ## Ofertas para ahorrar
 
 `src/offers.js` guarda un catálogo de ofertas comprobadas a mano (última revisión: 12/11/2026), cada una con su fuente, sus condiciones, si consta que vale para GLP y su fecha de fin. En la web:
