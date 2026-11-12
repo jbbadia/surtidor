@@ -131,11 +131,51 @@ document.addEventListener('click', e => {
 
 // ======================= Mapa =======================
 const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([center.lat, center.lon], 12);
-// Teselas estándar de OpenStreetMap (sin clave). En modo oscuro se oscurecen con un filtro CSS.
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19, className: 'osm-tiles',
-  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-}).addTo(map);
+// Mapa base: OpenFreeMap (vectorial, gratis, sin clave y sin depender del Referer).
+// El servidor público de OpenStreetMap devuelve «Access blocked» (403) a los móviles que no envían
+// Referer (Safari con protección de privacidad, Brave, Firefox, bloqueadores…), así que solo se usa
+// como reserva si el dispositivo no tiene WebGL o OpenFreeMap no responde.
+const ATTR_OSM = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+const dark = window.matchMedia('(prefers-color-scheme: dark)');
+const styleUrl = () => `https://tiles.openfreemap.org/styles/${dark.matches ? 'dark' : 'liberty'}`;
+function hasWebGL() {
+  try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch { return false; }
+}
+let baseLayer = null;
+function useRasterFallback(reason) {
+  if (baseLayer && baseLayer.options?.className === 'osm-tiles') return;
+  if (baseLayer) map.removeLayer(baseLayer);
+  baseLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, className: 'osm-tiles', referrerPolicy: 'strict-origin-when-cross-origin', attribution: ATTR_OSM,
+  }).addTo(map);
+  baseLayer.bringToBack();
+  document.documentElement.dataset.map = `osm (${reason})`;
+}
+// MapLibre pesa ~300 KB: se carga aparte para que la lista y los precios no lo esperen.
+async function initBaseMap() {
+  if (!hasWebGL()) return useRasterFallback('sin WebGL');
+  try {
+    const [{ maplibreGL }] = await Promise.all([
+      import('@maplibre/maplibre-gl-leaflet'),
+      import('maplibre-gl/dist/maplibre-gl.css'),
+    ]);
+    if (baseLayer) return;      // ya se pasó a la reserva
+    baseLayer = maplibreGL({ style: styleUrl(), attribution: `<a href="https://openfreemap.org">OpenFreeMap</a> ${ATTR_OSM}` }).addTo(map);
+    const gl = baseLayer.getMaplibreMap();
+    // El estilo de OpenFreeMap referencia alguna textura que no trae (p. ej. "wood-pattern"):
+    // se rellena con un píxel transparente para no llenar la consola de avisos.
+    gl.on('styleimagemissing', e => {
+      if (!gl.hasImage(e.id)) gl.addImage(e.id, { width: 1, height: 1, data: new Uint8Array(4) });
+    });
+    let loaded = false;
+    gl.once('load', () => { loaded = true; document.documentElement.dataset.map = 'openfreemap'; });
+    setTimeout(() => { if (!loaded) useRasterFallback('OpenFreeMap no respondió'); }, 12000);
+    dark.addEventListener?.('change', () => { if (baseLayer?.getMaplibreMap) baseLayer.getMaplibreMap().setStyle(styleUrl()); });
+  } catch {
+    useRasterFallback('error al cargar el mapa vectorial');
+  }
+}
+initBaseMap();
 const markers = L.layerGroup().addTo(map);
 const radiusCircle = L.circle([center.lat, center.lon], { radius: 1, color: '#1f56a8', weight: 1, opacity: .5, fillOpacity: .04, interactive: false }).addTo(map);
 let programmatic = false;
@@ -692,7 +732,9 @@ $('disc-add').addEventListener('click', () => {
   savePrefs(); renderDiscounts();
   $('disc-brand').value = ''; $('disc-value').value = '';
 });
-dlg.addEventListener('close', () => {
+// Los datos del coche se guardan al cambiar cada campo (no solo al cerrar), para no perderlos
+// si el diálogo se cierra de otra forma o el evento "close" llega tarde.
+function saveCarFromForm() {
   const raw = Object.fromEntries(CAR_FIELDS.map(k => [k, $(`car-${k}`).value]));
   for (const k of ['glpL', 'glpCons', 'gasL', 'gasCons']) raw[k] = String(raw[k]).replace(',', '.');
   prefs.car = sanitizeCar(raw);
@@ -700,8 +742,14 @@ dlg.addEventListener('close', () => {
     prefs.fuels = FUELS.map(f => f.id).filter(x => x === prefs.car.gasFuel || prefs.fuels.includes(x));
     renderFuelChips();
   }
+  savePrefs();
+}
+for (const k of CAR_FIELDS) $(`car-${k}`).addEventListener('change', () => { saveCarFromForm(); update(); });
+$('car-reset').addEventListener('click', () => { saveCarFromForm(); update(); });
+dlg.addEventListener('close', () => {
+  saveCarFromForm();
   ensureFuel(prefs.car.gasFuel).then(update).catch(() => {});
-  savePrefs(); update();
+  update();
   if (activeId) renderDetail(activeId, false);
 });
 

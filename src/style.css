@@ -35,6 +35,8 @@
 }
 
 * { box-sizing: border-box; }
+/* El atributo hidden debe ganar siempre a los display de las clases (.notice, .car, …). */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
