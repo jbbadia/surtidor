@@ -93,6 +93,25 @@ test('se desvía si compensa, y no por un céntimo', () => {
   assert.deepEqual(cheapPlan(rank([st('lejos', 300, 0.75, 10), st('pegada', 320, 0.90, 0.1)]), o).stops.map(s => s.id), ['lejos']);
 });
 
+test('bifuel: no para por un par de litros si puede hacer esos km con gasolina', () => {
+  // Autonomía útil 400 km y la gasolinera barata está en el km 420: faltan 20 km.
+  // «a» (km 20) solo serviría para rellenar 1,5 L recién salido.
+  const sts = [st('a', 20, 0.9), st('b', 420, 0.8)];
+  const o = { ...base, totalKm: 500, gapCostPerKm: 0.08 };
+  assert.deepEqual(cheapPlan(sts, o).stops.map(s => s.id), ['a', 'b'], 'sin margen de gasolina, para dos veces');
+  const p = cheapPlan(sts, { ...o, slackKm: 60 });
+  assert.deepEqual(p.stops.map(s => s.id), ['b']);
+  assert.ok(Math.abs(p.gapKm - 20) < 0.01, String(p.gapKm));
+  // Pero no cambia una parada de verdad por muchos km de gasolina.
+  const far = cheapPlan([st('a', 300, 0.9)], { ...base, totalKm: 700, gapCostPerKm: 0.08, slackKm: 60 });
+  assert.deepEqual(far.stops.map(s => s.id), ['a']);
+});
+
+test('cada parada dice si hay que llenar o basta con una parte', () => {
+  const p = fillPlan([st('a', 300, 1.2), st('b', 500, 0.8), st('c', 800, 1.0)], base);
+  assert.deepEqual(p.stops.map(s => s.full), [false, true, false]);
+});
+
 test('las paradas conservan los datos de la estación', () => {
   const p = fillPlan([{ ...st('a', 300, 0.9), sid: 'x', leg: 1 }], { ...base, totalKm: 500 });
   assert.equal(p.stops[0].sid, 'x');

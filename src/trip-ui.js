@@ -10,6 +10,9 @@ import { catalog, fuelById, searchPlaces, geocode } from './api.js';
 // barata» pueda desviarse si compensa; la «más rápida» elige siempre la más pegada a la carretera.
 const GLP_CORRIDOR = 12, GAS_CORRIDOR = 6;
 const NEAR_KM = 0.5;                           // «junto a la ruta»
+// Ida y vuelta: las gasolineras que rodean el destino se pasan dos veces casi seguidas. Con menos
+// de estos km entre una pasada y la otra, cuentan como una sola parada posible.
+const TURN_KM = 30;
 const uniq = list => [...new Map(list.map(s => [s.sid, s])).values()];
 const LEVELS = { 1: 'lleno', 0.75: 'a 3/4', 0.5: 'a la mitad', 0.25: 'a 1/4', 0.1: 'casi vacío' };
 
@@ -126,7 +129,8 @@ export function initTrip(ctx) {
         const a = candidates(route1, fuelId, corridor).map(s => ({ ...s, sid: s.id, leg: 0, legAt: s.at }));
         if (!route2) return a;
         const b = candidates(route2, fuelId, corridor).map(s => ({ ...s, sid: s.id, id: `${s.id}#v`, leg: 1, legAt: s.at, at: s.at + route1.km }));
-        return [...a, ...b];
+        const out = new Map(a.map(s => [s.sid, s]));
+        return [...a, ...b.filter(s => !out.has(s.sid) || s.at - out.get(s.sid).at > TURN_KM)];
       };
       const glp = along(GLP, GLP_CORRIDOR);
       const gas = along(c.gasFuel, GAS_CORRIDOR);
@@ -140,9 +144,12 @@ export function initTrip(ctx) {
         totalKm, rangeKm, startKm: level * rangeKm, cons,
         reserveKm: Math.min(isGlp ? 30 : 50, rangeKm * 0.15),
         gapCostPerKm: isGlp && medGas ? (c.gasCons / 100) * medGas : 0,
+        // Bifuel: mejor hacer unos pocos km con gasolina que parar a echar un par de litros de GLP.
+        slackKm: isGlp ? Math.min(80, rangeKm * 0.2) : 0,
       };
       state = {
         from, to, round, coords: r2 ? [r1.coords, r2.coords] : [r1.coords], km: totalKm, seconds: r1.seconds + (r2 ? r2.seconds : 0),
+        legs: [{ km: route1.km, seconds: r1.seconds }, ...(r2 ? [{ km: route2.km, seconds: r2.seconds }] : [])],
         fuel, isGlp, level, cands, o, medGlp, medGas,
         plans: { cheap: cheapPlan(cands, o), fast: fastPlan(cands, o) },
       };
@@ -163,23 +170,32 @@ export function initTrip(ctx) {
   const stopsText = n => `${n} parada${n === 1 ? '' : 's'}`;
 
   function planSummary(p, other) {
-    const { o, isGlp, level } = state;
+    const { o, isGlp, level, cands } = state;
     const name = isGlp ? 'GLP' : 'gasolina';
+    const petrol = isGlp && p.gapKm > 0.5
+      ? `unos <b>${num(p.gapKm, 0)} km irás con gasolina</b>${o.gapCostPerKm ? ` (≈ ${euros(p.gapKm * o.gapCostPerKm)})` : ''}` : '';
     let html;
     if (!p.stops.length && !p.gapKm) {
       html = `<b>No necesitas repostar.</b> Con el depósito ${LEVELS[level] || 'así'} tienes para unos ${Math.round(o.startKm)} km de ${name} y el viaje son ${Math.round(o.totalKm)} km${state.round ? ' entre ida y vuelta' : ''}. ${mode === 'cheap'
         ? 'Si aun así quieres llenar por el camino, esta es la más barata de la ruta contando el desvío:'
         : 'Si aun así quieres llenar por el camino, esta es la más barata de las que están junto a la carretera:'}`;
-    } else if (!p.stops.length) {
+    } else if (!p.stops.length && !cands.length) {
       html = `<b>No hay gasolineras con ${name} junto a esta ruta.</b>`;
+    } else if (!p.stops.length) {
+      html = isGlp
+        ? `<b>Sin paradas.</b> El GLP no te llega para todo el viaje y ${petrol}: parar a repostar por tan poco no compensa.${other.stops.length ? ` Si prefieres no gastar gasolina, mira «${mode === 'cheap' ? 'Más rápida' : 'Más barata'}».` : ''}`
+        : '<b>No hay gasolineras a tiro para este viaje.</b>';
     } else {
-      html = `<b>${stopsText(p.stops.length)}</b> · pagas <b>${euros(p.paid)}</b> por ${num(p.litres)} L (${priceText(p.paid / p.litres)} €/L de media)${p.detourKm >= 0.5 ? ` · unos ${num(p.detourKm, 0)} km de desvío en total` : ' · casi sin desvío'}.`;
+      const line = t => `<span class="t-line">${t}</span>`;
+      html = `<span class="t-head"><b>${stopsText(p.stops.length)}</b> · pagas <b>${euros(p.paid)}</b></span>`
+        + line(`${num(p.litres)} L de ${name} a ${priceText(p.paid / p.litres)} €/L de media${p.detourKm >= 0.5 ? ` · unos ${num(p.detourKm, 0)} km de desvío en total` : ' · casi sin desvío'}`);
+      if (petrol) html += line(`Además, ${petrol}: parar por tan poco no compensa.`);
       const diff = other.cost - p.cost;
-      if (mode === 'cheap' && diff > 0.05) html += ` Ahorras <b class="good">${euros(diff)}</b> frente a la ruta más rápida.`;
+      if (mode === 'cheap' && diff > 0.05) html += line(`Ahorras <b class="good">${euros(diff)}</b> frente a la ruta más rápida.`);
       else if (mode === 'fast' && diff < -0.05) {
         const less = other.stops.length - p.stops.length;
-        html += ` Cuesta ${euros(-diff)} más que la más barata${less > 0 ? `, con ${stopsText(less)} menos` : other.detourKm - p.detourKm >= 1 ? `, con ${num(other.detourKm - p.detourKm, 0)} km menos de desvío` : ''}.`;
-      } else if (other.stops.length && Math.abs(diff) <= 0.05) html += ' En este viaje, la más barata y la más rápida coinciden.';
+        html += line(`Cuesta ${euros(-diff)} más que la más barata${less > 0 ? `, con ${stopsText(less)} menos` : other.detourKm - p.detourKm >= 1 ? `, con ${num(other.detourKm - p.detourKm, 0)} km menos de desvío` : ''}.`);
+      } else if (other.stops.length && Math.abs(diff) <= 0.05) html += line('En este viaje, la más barata y la más rápida coinciden.');
     }
     return html;
   }
@@ -198,7 +214,7 @@ export function initTrip(ctx) {
     if (!s) return '';
     const tank = tankFor(car(), state.fuel);
     const sub = n === '+' ? `<div class="t-do">Parada opcional · llenar ${tank} L costaría ${euros(tank * x.price)}</div>`
-      : n ? `<div class="t-do">Echa al menos <b>${num(x.litres)} L</b> · ${euros(x.cost)}</div>`
+      : n ? `<div class="t-do">${x.full ? `<b>Llena el depósito</b> · unos ${num(x.litres, 0)} L` : `Echa al menos <b>${num(x.litres)} L</b>`} · ${euros(x.cost)}</div>`
       : '';
     const where = state.round ? (x.leg ? 'la vuelta' : 'la ida') : 'la ruta';
     return `<li class="t-stop" data-id="${x.sid}" tabindex="0">
@@ -211,6 +227,37 @@ export function initTrip(ctx) {
       </div>
       <div class="price">${ctx.priceHTML(x.price)}<span class="u">€/L</span></div>
     </li>`;
+  }
+
+  /** El viaje en orden: salida, paradas y tramos con gasolina de la ida; llegada; y lo mismo a la vuelta. */
+  function itinerary(p, opt) {
+    const { legs, from, to, round, o, level, isGlp } = state;
+    const short = l => esc(l.replace(/\s*\(.*\)$/, '').split(',')[0]);
+    const legOf = at => (round && at >= legs[0].km ? 1 : 0);
+    const legName = at => (round ? (legOf(at) ? ' de la vuelta' : ' de la ida') : '');
+    const kmIn = at => Math.round(at - (legOf(at) ? legs[0].km : 0));
+    const span = g => {
+      const a = g.from, b = g.to - 0.01;
+      return legOf(a) === legOf(b) ? `Del km ${kmIn(a)} al ${kmIn(b)}${legName(a)}` : `Del km ${kmIn(a)}${legName(a)} al ${kmIn(b)}${legName(b)}`;
+    };
+    const gapRow = g => `<li class="t-gap"><span class="t-n g" aria-hidden="true">!</span><div class="t-main">${isGlp
+      ? `<div class="t-do"><b>Unos ${num(g.km, 0)} km con gasolina</b>${o.gapCostPerKm ? ` · ≈ ${euros(g.km * o.gapCostPerKm)}` : ''}</div><div class="ad">${span(g)} ${g.km <= o.reserveKm ? 'el GLP llega justo: si se acaba, el coche pasa solo a gasolina.' : 'no hay GLP a tiro: el coche pasa solo a gasolina.'}</div>`
+      : `<div class="t-do"><b>${num(g.km, 0)} km sin cubrir</b></div><div class="ad">${span(g)} no hay gasolineras a tiro. Sal con más combustible.</div>`}</div></li>`;
+    const events = [
+      ...p.stops.map((x, i) => ({ at: x.at, leg: x.leg, html: stopRow(x, i + 1) })),
+      ...(opt ? [{ at: opt.at, leg: opt.leg, html: stopRow(opt, '+') }] : []),
+      ...p.gaps.filter(g => g.km > 0.5).map(g => ({ at: g.from, leg: legOf(g.from), html: gapRow(g) })),
+    ].sort((a, b) => a.at - b.at);
+    const wp = (cls, title, sub) => `<li class="t-wp"><span class="t-end ${cls}" aria-hidden="true"></span><div class="t-main"><div class="t-do"><b>${title}</b></div>${sub ? `<div class="ad">${sub}</div>` : ''}</div></li>`;
+    const head = (name, leg) => `<li class="t-leg"><b>${name}</b> · ${num(leg.km, 0)} km · ${hm(leg.seconds)}</li>`;
+    const usable = Math.max(0, Math.round(Math.min(o.startKm, o.rangeKm) - o.reserveKm));
+    const start = wp('a', `Salida · ${short(from.label)}`, `Depósito ${LEVELS[level] || 'así'}: ${isGlp ? 'GLP' : 'gasolina'} para unos ${usable} km, más ${Math.round(o.reserveKm)} de margen`);
+    return legs.map((leg, i) => [
+      round ? head(i ? 'Vuelta' : 'Ida', leg) : '',
+      i ? '' : start,
+      ...events.filter(e => (e.leg || 0) === i).map(e => e.html),
+      wp(round && i ? 'a' : 'b', `Llegada · ${short((i ? from : to).label)}`, round && !i ? 'Aquí das la vuelta' : ''),
+    ].join('')).join('');
   }
 
   function render() {
@@ -230,10 +277,8 @@ export function initTrip(ctx) {
     }
     const opt = !p.stops.length && !p.gapKm ? optionalStop() : null;
     const short = l => esc(l.replace(/\s*\(.*\)$/, '').split(',')[0]);
-    const gaps = p.gapKm > 0.5
-      ? `<div class="warn"><strong>${isGlp ? 'Tramo sin GLP' : 'Tramo sin gasolineras'}</strong>${isGlp
-        ? `Hay ${num(p.gapKm, 0)} km en los que no llegas con GLP (${p.gaps.map(g => `del km ${Math.round(g.from)} al ${Math.round(g.to)}`).join(', ')}). El coche pasará solo a gasolina${o.gapCostPerKm ? `: unos ${euros(p.gapKm * o.gapCostPerKm)}` : ''}.`
-        : `No encontramos gasolineras para cubrir ${num(p.gapKm, 0)} km de la ruta. Sal con más combustible.`}</div>`
+    const gaps = !isGlp && p.gapKm > 0.5
+      ? `<div class="warn"><strong>Tramo sin gasolineras</strong>No encontramos gasolineras para cubrir ${num(p.gapKm, 0)} km de la ruta. Sal con más combustible.</div>`
       : '';
     const pt = x => `${x.lat},${x.lon}`;
     const wp = [...p.stops.filter(x => !x.leg).map(pt), ...(round ? [pt(to)] : []), ...p.stops.filter(x => x.leg).map(pt)].join('|');
@@ -259,11 +304,11 @@ export function initTrip(ctx) {
         <p class="hint">${mode === 'cheap' ? 'Para en las gasolineras más baratas de la ruta, aunque haya que desviarse un poco.' : 'Las menos paradas posibles y pegadas a la carretera, cueste lo que cueste.'}</p>
         <p class="t-plan-sum" id="t-plan-sum">${planSummary(p, other)}</p>
         ${gaps}
-        <ol class="t-stops" id="t-stops">${p.stops.map((x, i) => stopRow(x, i + 1)).join('')}${opt ? stopRow(opt, '+') : ''}</ol>
+        <ol class="t-stops t-itin" id="t-stops">${itinerary(p, opt)}</ol>
         <a class="btn primary" href="${esc(gmaps)}" target="_blank" rel="noopener">Abrir la ruta en Google Maps${p.stops.length ? ' con las paradas' : ''}</a>
       </div>
       ${cheapest.length ? `<details class="t-all"><summary>Las ${cheapest.length} más baratas de la ruta (${all.length} gasolineras con ${isGlp ? 'GLP' : 'gasolina'} a menos de ${isGlp ? GLP_CORRIDOR : GAS_CORRIDOR} km)</summary><ol class="t-stops">${cheapest.map(x => stopRow(x, 0)).join('')}</ol></details>` : ''}
-      <p class="src">Los litros de cada parada son los mínimos para llegar con unos ${Math.round(o.reserveKm)} km de margen; si llenas el depósito, mejor en la parada más barata. Consumo de «Mi coche» (${num(o.cons)} L/100 km): en autovía suele ser algo mayor. Ruta y tiempos de OSRM (OpenStreetMap); la distancia a la ruta es en línea recta. Los precios pueden cambiar antes de que llegues.</p>`;
+      <p class="src">Donde pone «al menos», son los litros mínimos para llegar con unos ${Math.round(o.reserveKm)} km de margen; si prefieres llenar, mejor en la parada más barata. Consumo de «Mi coche» (${num(o.cons)} L/100 km): en autovía suele ser algo mayor. Ruta y tiempos de OSRM (OpenStreetMap); la distancia a la ruta es en línea recta. Los precios pueden cambiar antes de que llegues.</p>`;
   }
 
   $('t-result').addEventListener('click', e => {
@@ -299,7 +344,7 @@ export function initTrip(ctx) {
     if (!state) return false;
     const plan = state.plans[mode];
     const stopN = new Map();
-    plan.stops.forEach((s, i) => { if (!stopN.has(s.sid)) stopN.set(s.sid, i + 1); });
+    plan.stops.forEach((s, i) => stopN.set(s.sid, stopN.has(s.sid) ? `${stopN.get(s.sid)}·${i + 1}` : String(i + 1)));
     if (!plan.stops.length && !plan.gapKm) { const opt = optionalStop(); if (opt) stopN.set(opt.sid, '+'); }
     const cands = uniq(state.cands);
     const prices = cands.map(s => s.price).sort((a, b) => a - b);
@@ -308,7 +353,8 @@ export function initTrip(ctx) {
     const placed = [];
     const fits = (s, force) => {
       const pt = map.latLngToContainerPoint([s.lat, s.lon]);
-      const box = { x: pt.x - 29, y: pt.y - 26, w: 58, h: 26 };
+      const w = stopN.has(s.sid) ? 84 : 58;
+      const box = { x: pt.x - w / 2, y: pt.y - 26, w, h: 26 };
       if (!force && placed.some(b => box.x < b.x + b.w && b.x < box.x + box.w && box.y < b.y + b.h && b.y < box.y + box.h)) return false;
       placed.push(box); return true;
     };

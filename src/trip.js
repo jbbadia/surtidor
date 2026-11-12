@@ -119,9 +119,11 @@ export function fillPlan(stations, o) {
     const d = nodes[j].at - pos;
     if (d <= cap) {
       if (here && d > fuel) { here.buyKm += d - fuel; fuel = d; }
+      if (here) here.full = fuel >= U - 1;
       fuel -= d;
     } else {
       if (here && cap > fuel) { here.buyKm += cap - fuel; fuel = cap; }
+      if (here) here.full = true;
       next = i;
       const dn = nodes[i].at - pos;
       if (dn <= fuel) fuel -= dn;
@@ -136,7 +138,7 @@ export function fillPlan(stations, o) {
   const stops = visits.filter(v => v.buyKm > 0.01).map(v => {
     const det = detourKm(v.s);
     const litres = (v.buyKm + det) * o.cons / 100;
-    return { ...v.s, detourKm: det, litres, cost: litres * v.s.price };
+    return { ...v.s, detourKm: det, litres, cost: litres * v.s.price, full: !!v.full };
   });
   const gapKm = gaps.reduce((a, g) => a + g.km, 0);
   const litres = stops.reduce((a, s) => a + s.litres, 0);
@@ -151,16 +153,21 @@ export function fillPlan(stations, o) {
 /**
  * Plan más barato. Parte del reparto óptimo y quita las paradas que ahorran menos de `stopCost` €
  * (no merece la pena una parada más para ahorrar unos céntimos).
+ *
+ * Con `o.slackKm` (coche bifuel) también puede quitar una parada a cambio de hacer unos km con el
+ * otro combustible, si sale a cuenta: como mucho `slackKm` km más de los inevitables. Así no manda
+ * parar para echar un par de litros.
  */
-export function cheapPlan(stations, o, stopCost = 0.5) {
+export function cheapPlan(stations, o, stopCost = 1) {
   let best = fillPlan(stations, o);
+  const maxGap = best.gapKm + (o.gapCostPerKm > 0 ? (o.slackKm || 0) : 0);
   let ids = new Set(best.stops.map(s => s.id));
   for (;;) {
     let pick = null;
     for (const id of ids) {
       const rest = stations.filter(s => ids.has(s.id) && s.id !== id);
       const p = fillPlan(rest, o);
-      if (p.gapKm > best.gapKm + 0.01 || p.cost - best.cost >= stopCost) continue;
+      if (p.gapKm > Math.max(maxGap, best.gapKm) + 0.01 || p.cost - best.cost >= stopCost) continue;
       if (!pick || p.cost < pick.plan.cost) pick = { id, plan: p };
     }
     if (!pick) return best;

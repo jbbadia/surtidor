@@ -49,13 +49,14 @@ No aparece si ya está abierta como app ni si pulsaste «Ahora no».
 Pestaña «Viaje». Con la salida y el destino (y, si se marca, **ida y vuelta**):
 - Calcula la ruta por carretera (OSRM sobre OpenStreetMap, `src/route.js`) y el **gasto medio del viaje** con GLP y con gasolina, usando el consumo de «Mi coche» y la mediana de precios de las gasolineras que quedan junto a la ruta.
 - Propone dónde parar, según el combustible que llevas al salir (`src/trip.js`):
-  - **Más barata:** compra lo justo en las caras y llena en las baratas, desviándose si compensa contando el rodeo; no añade una parada si ahorra menos de 0,50 €.
+  - **Más barata:** compra lo justo en las caras y llena en las baratas, desviándose si compensa contando el rodeo; no añade una parada si ahorra menos de 1 €. Con GLP tampoco manda parar por un par de litros: si faltan pocos km (hasta el 20 % de la autonomía, 80 km como mucho) y sale a cuenta, los deja para la gasolina y lo dice.
   - **Más rápida:** las menos paradas posibles y pegadas a la carretera, sin mirar el precio.
 - Si no hace falta repostar, cada modo enseña una parada opcional (la más barata de la ruta o la más barata junto a la carretera).
 - Si hay un tramo sin GLP al alcance, avisa de que el coche pasará a gasolina y lo que costará.
-- Dibuja la ruta y las paradas en el mapa y abre la ruta con sus paradas en Google Maps.
+- Enseña el viaje en orden: salida, paradas numeradas (con «Llena el depósito» o «Echa al menos X L»), tramos con gasolina y llegada; en ida y vuelta, separado en «Ida» y «Vuelta». En ida y vuelta, una gasolinera junto al destino cuenta como una sola parada.
+- Dibuja la ruta y las paradas en el mapa con su número (una gasolinera usada a la ida y a la vuelta lleva los dos, «1·4») y abre la ruta con sus paradas en Google Maps.
 
-Los litros de cada parada son los mínimos para llegar con unos 30 km de margen. La distancia de cada gasolinera a la ruta es en línea recta (GLP: hasta 12 km; gasolina: hasta 6 km).
+Donde pone «al menos», los litros son los mínimos para llegar con unos 30 km de margen. La distancia de cada gasolinera a la ruta es en línea recta (GLP: hasta 12 km; gasolina: hasta 6 km).
 
 ## Diario de repostajes
 

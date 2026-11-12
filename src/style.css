@@ -423,3 +423,18 @@ dialog::backdrop { background: rgba(10, 16, 24, .5); }
   .detail { animation: rise .18s ease-out; }
   @keyframes rise { from { transform: translateY(12px); opacity: .6; } to { transform: none; opacity: 1; } }
 }
+
+/* Viaje: itinerario ordenado (ida, paradas, llegada, vuelta) */
+.t-itin > li { border-bottom: 1px solid var(--line); }
+.t-itin > li:last-child { border-bottom: 0; }
+.t-itin .ad { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.t-leg { padding: 7px 12px; background: var(--surface-2); font-size: 13px; color: var(--muted); }
+.t-leg b { color: var(--ink); font: 700 15px var(--f-display); text-transform: uppercase; letter-spacing: .04em; }
+.t-wp, .t-gap { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; }
+.t-wp .t-end { flex: none; margin: 2px 5px 0; }
+.t-gap { background: var(--warn-bg); color: var(--warn-ink); }
+.t-gap .ad { color: inherit; opacity: .9; }
+.t-n.g { background: var(--warn-ink); color: var(--warn-bg); }
+.pin .n { padding: 0 3px; border-radius: 8px; }
+.t-head { display: block; font-size: 18px; }
+.t-line { display: block; margin-top: 3px; }
