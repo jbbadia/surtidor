@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareRoute, alongRoute, fillPlan, cheapPlan, fastPlan, thin } from '../src/trip.js';
+import { prepareRoute, alongRoute, fillPlan, cheapPlan, fastPlan, thin, withRank } from '../src/trip.js';
 
 // Ruta recta hacia el este por el paralelo 40: 1 grado de longitud ≈ 85,2 km.
 const route = prepareRoute(Array.from({ length: 401 }, (_, i) => [40, -4 + i * 0.01]));
@@ -83,6 +83,20 @@ test('el desvío se paga en litros', () => {
   const p = fillPlan([st('a', 300, 0.9, 2)], { ...base, totalKm: 500 });
   assert.ok(Math.abs(p.stops[0].detourKm - 5.2) < 0.01);
   assert.ok(Math.abs(p.stops[0].litres - (100 + 5.2) * 0.074) < 0.01);
+});
+
+test('se desvía si compensa, y no por un céntimo', () => {
+  const o = { ...base, totalKm: 600 };
+  const rank = sts => withRank(sts, 7.4, 20);
+  // 10 km de la ruta (26 km de rodeo ≈ 1,9 L): un céntimo menos no lo paga; 15 céntimos sí.
+  assert.deepEqual(cheapPlan(rank([st('lejos', 300, 0.89, 10), st('pegada', 320, 0.90, 0.1)]), o).stops.map(s => s.id), ['pegada']);
+  assert.deepEqual(cheapPlan(rank([st('lejos', 300, 0.75, 10), st('pegada', 320, 0.90, 0.1)]), o).stops.map(s => s.id), ['lejos']);
+});
+
+test('las paradas conservan los datos de la estación', () => {
+  const p = fillPlan([{ ...st('a', 300, 0.9), sid: 'x', leg: 1 }], { ...base, totalKm: 500 });
+  assert.equal(p.stops[0].sid, 'x');
+  assert.equal(p.stops[0].leg, 1);
 });
 
 test('thin deja las más baratas de cada tramo y la más pegada a la ruta', () => {

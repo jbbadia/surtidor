@@ -83,11 +83,22 @@ export function thin(stations, bucketKm = 10, keep = 2) {
 export const detourKm = s => 2 * s.off * ROAD_FACTOR;
 
 /**
+ * Precio «de comparación» de cada estación: su precio más lo que cuesta el desvío repartido entre
+ * los litros de un repostaje normal. Así una gasolinera apartada solo gana a una pegada a la ruta
+ * si de verdad sale más barata contando el rodeo.
+ */
+export function withRank(stations, cons, typicalLitres) {
+  return stations.map(s => ({ ...s, rank: s.price + (detourKm(s) * cons / 100) * s.price / typicalLitres }));
+}
+
+/**
  * Dadas las estaciones en las que se permite parar, cuánto echar en cada una para pagar lo mínimo:
  * en cada parada se compra lo justo para llegar a la siguiente más barata, o se llena si no la hay
  * a tiro. El destino cuenta como «gratis», así que al final solo se compra lo que falta para llegar.
  *
- * @param {Array<{id: string, at: number, off: number, price: number}>} stations ordenadas por `at`
+ * Para decidir se compara `rank` (ver withRank) si existe; lo que se paga es siempre `price`.
+ *
+ * @param {Array<{id: string, at: number, off: number, price: number, rank?: number}>} stations ordenadas por `at`
  * @param {{totalKm: number, rangeKm: number, startKm: number, reserveKm: number, cons: number, gapCostPerKm?: number}} o
  *   rangeKm: autonomía con el depósito lleno; startKm: autonomía al salir; reserveKm: margen que no
  *   se quiere tocar; cons: L/100 km; gapCostPerKm: € por km de los tramos que no se pueden cubrir.
@@ -95,6 +106,7 @@ export const detourKm = s => 2 * s.off * ROAD_FACTOR;
 export function fillPlan(stations, o) {
   const U = Math.max(1, o.rangeKm - o.reserveKm);
   const nodes = [...stations, { id: null, at: o.totalKm, off: 0, price: -1 }];
+  const rank = s => s.rank ?? s.price;
   const visits = [], gaps = [];
   let pos = 0, price = Infinity, fuel = Math.max(0, Math.min(o.startKm, o.rangeKm) - o.reserveKm);
   let here = null;                     // parada actual (null en la salida: ahí no se puede repostar)
@@ -102,7 +114,7 @@ export function fillPlan(stations, o) {
   for (;;) {
     const cap = here ? U : fuel;       // lo máximo que se puede llevar al salir de este punto
     let j = i;
-    while (nodes[j].price >= price) j++;
+    while (rank(nodes[j]) >= price) j++;
     let next = j;
     const d = nodes[j].at - pos;
     if (d <= cap) {
@@ -117,14 +129,14 @@ export function fillPlan(stations, o) {
     }
     const n = nodes[next];
     if (n.id === null) break;
-    pos = n.at; price = n.price; i = next + 1;
+    pos = n.at; price = rank(n); i = next + 1;
     here = { s: n, buyKm: 0 };
     visits.push(here);
   }
   const stops = visits.filter(v => v.buyKm > 0.01).map(v => {
     const det = detourKm(v.s);
     const litres = (v.buyKm + det) * o.cons / 100;
-    return { id: v.s.id, at: v.s.at, off: v.s.off, price: v.s.price, detourKm: det, litres, cost: litres * v.s.price };
+    return { ...v.s, detourKm: det, litres, cost: litres * v.s.price };
   });
   const gapKm = gaps.reduce((a, g) => a + g.km, 0);
   const litres = stops.reduce((a, s) => a + s.litres, 0);
@@ -138,9 +150,9 @@ export function fillPlan(stations, o) {
 
 /**
  * Plan más barato. Parte del reparto óptimo y quita las paradas que ahorran menos de `stopCost` €
- * (parar tiene un coste en tiempo: no merece la pena detenerse para ahorrar unos céntimos).
+ * (no merece la pena una parada más para ahorrar unos céntimos).
  */
-export function cheapPlan(stations, o, stopCost = 1) {
+export function cheapPlan(stations, o, stopCost = 0.5) {
   let best = fillPlan(stations, o);
   let ids = new Set(best.stops.map(s => s.id));
   for (;;) {

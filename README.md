@@ -46,15 +46,16 @@ No aparece si ya está abierta como app ni si pulsaste «Ahora no».
 
 ## Viaje: dónde repostar por el camino
 
-Pestaña «Viaje». Con la salida y el destino:
+Pestaña «Viaje». Con la salida y el destino (y, si se marca, **ida y vuelta**):
 - Calcula la ruta por carretera (OSRM sobre OpenStreetMap, `src/route.js`) y el **gasto medio del viaje** con GLP y con gasolina, usando el consumo de «Mi coche» y la mediana de precios de las gasolineras que quedan junto a la ruta.
 - Propone dónde parar, según el combustible que llevas al salir (`src/trip.js`):
-  - **Más barata:** compra lo justo en las caras y llena en las baratas; no añade una parada si ahorra menos de 1 €.
+  - **Más barata:** compra lo justo en las caras y llena en las baratas, desviándose si compensa contando el rodeo; no añade una parada si ahorra menos de 0,50 €.
   - **Más rápida:** las menos paradas posibles y pegadas a la carretera, sin mirar el precio.
+- Si no hace falta repostar, cada modo enseña una parada opcional (la más barata de la ruta o la más barata junto a la carretera).
 - Si hay un tramo sin GLP al alcance, avisa de que el coche pasará a gasolina y lo que costará.
 - Dibuja la ruta y las paradas en el mapa y abre la ruta con sus paradas en Google Maps.
 
-Los litros de cada parada son los mínimos para llegar con unos 30 km de margen. La distancia de cada gasolinera a la ruta es en línea recta (GLP: hasta 6 km; gasolina: hasta 3 km).
+Los litros de cada parada son los mínimos para llegar con unos 30 km de margen. La distancia de cada gasolinera a la ruta es en línea recta (GLP: hasta 12 km; gasolina: hasta 6 km).
 
 ## Diario de repostajes
 

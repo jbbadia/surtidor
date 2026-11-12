@@ -375,6 +375,9 @@ dialog::backdrop { background: rgba(10, 16, 24, .5); }
 .pin.stop { border-width: 3px; z-index: 2; }
 .pin .n { display: inline-grid; place-items: center; min-width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 11px; margin-right: 4px; vertical-align: 1px; }
 
+.check { display: flex; align-items: center; gap: 8px; font-size: 14.5px; font-weight: 500; cursor: pointer; align-self: flex-start; padding: 4px 0; }
+.check input { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
+
 /* ---------- Diario ---------- */
 .l-stats { display: flex; flex-direction: column; gap: 10px; }
 .l-stats .empty { padding: 4px 0; }
