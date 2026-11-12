@@ -37,3 +37,43 @@ export function minutesAgoText(ms) {
   if (h >= 24) return `hace ${Math.floor(h / 24)} d`;
   return `hace ${h} h${r ? ` ${r} min` : ''}`;
 }
+
+const DOW = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+export function median(values) {
+  const s = [...values].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/**
+ * ¿Hay un día de la semana en el que el combustible suela estar más barato?
+ * Cada día se compara con la media de su semana (los 3 días anteriores y posteriores), para que
+ * una subida o bajada general de precios no se confunda con un efecto del día.
+ * Solo se da por confirmado si la diferencia es de al menos 0,3 cént/L y se repite en 3 de cada 4 semanas.
+ * @param {Array<{day: string, value: number}>} points un valor por día ('YYYY-MM-DD')
+ * @returns {null | {confirmed: boolean, best: {dow: number, name: string, diff: number, hits: number, n: number}, spread: number, weeks: number}}
+ */
+export function weekdayPattern(points) {
+  const s = [...points].filter(p => Number.isFinite(p.value)).sort((a, b) => a.day.localeCompare(b.day));
+  if (s.length < 35) return null;
+  const t = s.map(p => Date.parse(p.day + 'T00:00:00Z') / 86400000);
+  const groups = DOW.map(() => []);
+  s.forEach((p, i) => {
+    const around = s.filter((_, k) => Math.abs(t[k] - t[i]) <= 3);
+    if (around.length < 6) return;                       // semana incompleta (bordes o huecos)
+    const base = around.reduce((a, x) => a + x.value, 0) / around.length;
+    groups[new Date(t[i] * 86400000).getUTCDay()].push(p.value - base);
+  });
+  const stats = groups.map((g, dow) => ({
+    dow, name: DOW[dow], n: g.length,
+    diff: g.length ? g.reduce((a, x) => a + x, 0) / g.length : 0,
+    hits: g.filter(x => x < -0.0002).length,
+  })).filter(x => x.n >= 4);
+  if (stats.length < 7) return null;
+  const best = stats.reduce((m, x) => (x.diff < m.diff ? x : m));
+  const worst = stats.reduce((m, x) => (x.diff > m.diff ? x : m));
+  return {
+    confirmed: best.diff <= -0.003 && best.hits / best.n >= 0.75,
+    best, worst, spread: worst.diff - best.diff, weeks: Math.round(s.length / 7),
+  };
+}

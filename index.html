@@ -59,7 +59,10 @@
       <div class="tabs" role="tablist">
         <button role="tab" id="tab-near" aria-selected="true" aria-controls="list">Cerca de <span id="place-label">…</span></button>
         <button role="tab" id="tab-fav" aria-selected="false" aria-controls="list">Favoritas <span id="fav-count" class="count"></span></button>
+        <button role="tab" id="tab-trip" aria-selected="false" aria-controls="view-trip">Viaje</button>
+        <button role="tab" id="tab-log" aria-selected="false" aria-controls="view-log">Diario</button>
       </div>
+      <div class="notice" id="offline" role="status" hidden><span>Sin conexión. Ves los últimos precios guardados; el mapa puede no cargar.</span></div>
       <div class="install" id="install" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v6M9 11h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         <div class="i-text"><b>Añádela a tu pantalla de inicio</b><span>Se abre como una app, con su icono.</span></div>
@@ -86,9 +89,61 @@
           </ul>
         </details>
       </section>
-      <div class="car" id="car-strip" hidden></div>
-      <p class="status" id="status" aria-live="polite">Cargando precios del Ministerio…</p>
-      <ol class="list" id="list"></ol>
+      <div class="alerts" id="alerts" hidden>
+        <div class="a-head"><b id="alerts-title">Avisos</b><button type="button" class="link" id="alerts-ok">Entendido</button></div>
+        <ul id="alerts-list"></ul>
+      </div>
+      <div class="view-list" id="view-list">
+        <div class="car" id="car-strip" hidden></div>
+        <p class="status" id="status" aria-live="polite">Cargando precios del Ministerio…</p>
+        <ol class="list" id="list"></ol>
+      </div>
+
+      <section class="view" id="view-trip" aria-label="Planificar un viaje" hidden>
+        <form id="trip-form" class="trip-form" autocomplete="off">
+          <p class="hint">Dinos de dónde sales y a dónde vas: calculamos lo que gastarás y en qué gasolineras de la ruta te conviene parar.</p>
+          <div class="place">
+            <label for="t-from">Salida</label>
+            <div class="p-in"><input id="t-from" type="search" placeholder="Municipio, código postal o dirección" enterkeyhint="next"><button type="button" class="btn" id="t-here">Mi ubicación</button></div>
+            <ul class="suggest" id="t-from-sug" role="listbox" hidden></ul>
+          </div>
+          <div class="place">
+            <label for="t-to">Destino</label>
+            <div class="p-in"><input id="t-to" type="search" placeholder="Municipio, código postal o dirección" enterkeyhint="go"></div>
+            <ul class="suggest" id="t-to-sug" role="listbox" hidden></ul>
+          </div>
+          <div class="t-opts">
+            <label class="field"><span>Combustible</span><select id="t-fuel"></select></label>
+            <label class="field"><span>Depósito al salir</span>
+              <select id="t-level"><option value="1">Lleno</option><option value="0.75">3/4</option><option value="0.5">Medio</option><option value="0.25">1/4</option><option value="0.1">Casi vacío</option></select>
+            </label>
+          </div>
+          <button class="btn primary" id="t-go">Calcular ruta</button>
+        </form>
+        <p class="t-status" id="t-status" aria-live="polite" hidden></p>
+        <div id="t-result" class="t-result"></div>
+      </section>
+
+      <section class="view" id="view-log" aria-label="Diario de repostajes" hidden>
+        <div id="l-stats" class="l-stats"></div>
+        <form id="log-form" class="log-form" autocomplete="off">
+          <h3 id="l-form-title">Apuntar repostaje</h3>
+          <div class="l-grid">
+            <label class="field col"><span>Fecha</span><input id="l-date" type="date" required></label>
+            <label class="field col"><span>Combustible</span><select id="l-fuel"></select></label>
+            <label class="field col"><span>Litros</span><input id="l-litres" type="number" min="0.1" max="200" step="0.01" inputmode="decimal" required></label>
+            <label class="field col"><span>Precio (€/L)</span><input id="l-price" type="number" min="0.1" max="5" step="0.001" inputmode="decimal" required></label>
+            <label class="field col"><span>Total (€)</span><input id="l-total" type="number" min="0" step="0.01" inputmode="decimal"></label>
+            <label class="field col"><span>Km del coche (opcional)</span><input id="l-odo" type="number" min="0" step="1" inputmode="numeric" placeholder="cuentakilómetros"></label>
+            <label class="field col full"><span>Gasolinera (opcional)</span><input id="l-station" type="text" maxlength="80"></label>
+          </div>
+          <button class="btn primary">Guardar repostaje</button>
+          <p class="src">Se guarda solo en este dispositivo. Con los km de dos repostajes de GLP calculamos tu consumo real.</p>
+        </form>
+        <h3 id="l-list-title" hidden>Repostajes</h3>
+        <ol id="l-list" class="l-list"></ol>
+        <div class="l-actions"><button type="button" class="btn" id="l-export" hidden>Exportar a Excel (CSV)</button></div>
+      </section>
     </aside>
     <div class="map-wrap">
       <div id="map" aria-label="Mapa de gasolineras"></div>
@@ -117,6 +172,9 @@
         <label class="field wide"><span>Gasolina que usas</span><select id="car-gasFuel"></select></label>
         <button type="button" id="car-reset" class="btn">Restablecer Dacia Sandero ECO-G 100 (2024)</button>
       </div>
+      <h2>Avisos de precio</h2>
+      <p class="hint">Al abrir la web te avisamos de lo que han cambiado tus favoritas desde la última visita. Si además pones un precio objetivo, te avisamos cuando haya GLP igual o más barato en tus favoritas o cerca de ti.</p>
+      <label class="field wide"><span>Avísame si el GLP baja de (€/L)</span><input id="glp-target" type="number" min="0.3" max="3" step="0.001" inputmode="decimal" placeholder="p. ej. 0.90"></label>
       <h2>Mis descuentos</h2>
       <p class="hint">Si tu tarjeta o club te descuenta en una marca, apúntalo y verás el precio que pagas de verdad. Se guarda solo en este navegador.</p>
       <div id="disc-list" class="disc-list"></div>
@@ -150,7 +208,7 @@
   </dialog>
 
   <footer class="foot">
-    <p>Precios oficiales que las gasolineras comunican al Ministerio (Geoportal de Gasolineras) y que pueden no coincidir con el surtidor. Web no oficial, sin anuncios, sin registro y sin rastreo. Mapa © OpenFreeMap · OpenStreetMap.</p>
+    <p>Precios oficiales que las gasolineras comunican al Ministerio (Geoportal de Gasolineras) y que pueden no coincidir con el surtidor. Web no oficial, sin anuncios, sin registro y sin rastreo. Mapa © OpenFreeMap · OpenStreetMap. Rutas: OSRM.</p>
   </footer>
 
   <script type="module" src="/src/main.js"></script>

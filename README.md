@@ -7,7 +7,7 @@ Comparador de precios de **GLP y gasolina** (95 E5, 95 E10, 95 Premium, 98 E5, 9
 ```bash
 npm install
 npm run dev        # http://localhost:5173
-npm test           # tests del intérprete de horarios
+npm test           # tests de los cálculos (horarios, coche, viaje, diario, avisos…)
 npm run build      # web estática en dist/ (se puede subir a cualquier hosting)
 ```
 
@@ -44,6 +44,38 @@ Es una web instalable (`public/manifest.webmanifest` y los iconos). El banner «
 
 No aparece si ya está abierta como app ni si pulsaste «Ahora no».
 
+## Viaje: dónde repostar por el camino
+
+Pestaña «Viaje». Con la salida y el destino:
+- Calcula la ruta por carretera (OSRM sobre OpenStreetMap, `src/route.js`) y el **gasto medio del viaje** con GLP y con gasolina, usando el consumo de «Mi coche» y la mediana de precios de las gasolineras que quedan junto a la ruta.
+- Propone dónde parar, según el combustible que llevas al salir (`src/trip.js`):
+  - **Más barata:** compra lo justo en las caras y llena en las baratas; no añade una parada si ahorra menos de 1 €.
+  - **Más rápida:** las menos paradas posibles y pegadas a la carretera, sin mirar el precio.
+- Si hay un tramo sin GLP al alcance, avisa de que el coche pasará a gasolina y lo que costará.
+- Dibuja la ruta y las paradas en el mapa y abre la ruta con sus paradas en Google Maps.
+
+Los litros de cada parada son los mínimos para llegar con unos 30 km de margen. La distancia de cada gasolinera a la ruta es en línea recta (GLP: hasta 6 km; gasolina: hasta 3 km).
+
+## Diario de repostajes
+
+Pestaña «Diario» (o «Apuntar repostaje aquí» en la ficha de una gasolinera). Se guarda solo en el dispositivo y calcula (`src/log.js`):
+- **Gasto por mes**, separado en GLP y gasolina.
+- **Consumo real de GLP**, con los km del coche de dos repostajes de GLP (supone que llenas; descuenta los km hechos con la gasolina repostada entre medias). Con un toque se pasa a «Mi coche».
+- **Ahorro por ir con GLP**: lo que habrían costado esos km con gasolina al precio de ese día.
+
+Se puede exportar a CSV para Excel o Numbers.
+
+## Avisos y mejor día
+
+- **Al abrir la web** aparecen los cambios de precio de tus favoritas desde la última visita y, si pones un precio objetivo en los ajustes, las gasolineras con GLP igual o más barato (`src/alerts.js`). No hay notificaciones con la web cerrada: harían falta un servidor que vigile los precios y un servicio de envío.
+- **¿Qué día repostar?** Compara la mediana diaria del GLP de la provincia durante 8 semanas. Solo señala un día si es al menos 0,3 cént/L más barato que su semana y se repite en 3 de cada 4 semanas; si no, dice que da igual.
+
+## Sin conexión
+
+- `public/sw.js` guarda la propia web (HTML, código, iconos y fuentes) para abrirla sin cobertura. Solo se activa en la versión publicada.
+- Los precios y el catálogo de gasolineras se guardan en IndexedDB (`src/store.js`). Sin red se muestran los últimos descargados, con su hora y un aviso.
+- El mapa, las rutas y los históricos necesitan conexión.
+
 ## Ofertas para ahorrar
 
 `src/offers.js` guarda un catálogo de ofertas comprobadas a mano (última revisión: 12/11/2026), cada una con su fuente, sus condiciones, si consta que vale para GLP y su fecha de fin. En la web:
@@ -55,18 +87,23 @@ No aparece si ya está abierta como app ni si pulsaste «Ahora no».
 
 ## Qué hace
 
-- Mapa (OpenStreetMap + Leaflet) con el precio en cada pin, coloreado de barato a caro dentro de la zona. Los pines que se solaparían se ocultan dando prioridad a los más baratos o cercanos; al hacer zoom aparecen más.
+- Mapa (OpenFreeMap + Leaflet) con el precio en cada pin, coloreado de barato a caro dentro de la zona. Los pines que se solaparían se ocultan dando prioridad a los más baratos o cercanos; al hacer zoom aparecen más.
 - Búsqueda por **mi ubicación**, **municipio** o **código postal** (sin salir del navegador) y, si no hay coincidencia, por dirección en OpenStreetMap.
 - Varios combustibles a la vez; uno es el «principal» (pines y orden), los demás se ven como precio secundario.
 - Orden por precio o distancia; filtros por radio, **abiertas ahora**, **low cost** y marca.
 - **Precio dudoso**: aviso si el precio no ha cambiado en 30 días mientras ≥80 % de la provincia sí lo hizo, o si es un valor atípico (bajo Q1 − 1,5·IQR y >10 % bajo la mediana). Calibrado con datos reales para no avisar de más.
 - Ficha con todos los precios, **mis descuentos** por marca (% o cént/L), **calculadora de llenado**, horario interpretado, **histórico de 30 días** y botones «Cómo llegar» (Google Maps / Apple Mapas).
 - **Favoritas** ordenadas por precio y siempre visibles en el mapa.
-- Todo lo personal (favoritas, descuentos, preferencias) se guarda solo en el navegador. Los precios se cachean 30 min.
+- Todo lo personal (favoritas, descuentos, preferencias, diario) se guarda solo en el navegador. Los precios se cachean 30 min.
 
 ## Archivos
 
 - `src/api.js`: acceso a la API, caché local, histórico y búsqueda de lugares.
+- `src/store.js`: almacén en IndexedDB para el catálogo y los precios.
+- `src/trip.js`, `src/route.js`, `src/trip-ui.js`: planificador de viaje (cálculo, ruta y pantalla).
+- `src/log.js`, `src/log-ui.js`: diario de repostajes (cálculo y pantalla).
+- `src/alerts.js`, `src/history.js`: avisos de precio, último cambio y mejor día de la semana.
+- `public/sw.js`: service worker para abrir la web sin conexión.
 - `src/offers.js`: catálogo de ofertas con caducidad y a qué marcas se aplica.
 - `src/car.js`: perfil del coche y cálculos (coste por 100 km, autonomía, ahorro neto con desvío).
 - `src/horario.js`: interpreta horarios como `L-V: 07:00-14:00 y 16:00-21:00; S: 08:00-14:00` (zona horaria de Canarias incluida).
@@ -77,4 +114,5 @@ No aparece si ya está abierta como app ni si pulsaste «Ahora no».
 
 - El Ministerio da **una fecha global** de actualización, no una por estación: ningún precio puede garantizarse en el surtidor. La web lo indica siempre.
 - Los horarios con un solo día suelto (`L: 24H`, ~450 estaciones) son ambiguos y se muestran como «Horario no claro».
-- `tile.openstreetmap.org` está bien para uso personal o con poco tráfico; si la web se publica con muchas visitas, conviene cambiar a un proveedor de mapas con plan propio.
+- Los servidores públicos de rutas (OSRM) y de mapas (OpenFreeMap) son gratuitos y sin garantía: valen para uso personal, no para muchas visitas.
+- En el viaje, el desvío a cada gasolinera es una estimación en línea recta y no se tiene en cuenta si estará abierta cuando llegues.

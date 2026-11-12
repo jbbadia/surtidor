@@ -1,17 +1,20 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './style.css';
-import { FUELS, fuelById, catalog, loadFuel, provinceHistory, stationHistory, searchPlaces, geocode, parseFecha } from './api.js';
+import { FUELS, fuelById, catalog, loadFuel, provinceHistory, stationHistory, searchPlaces, geocode, parseFecha, provinceDailyMedians } from './api.js';
 import { openStatus } from './horario.js';
 import { SANDERO, GLP, tankFor, consFor, costPer100, rangeKm, netSaving, sanitizeCar } from './car.js';
 import { OFFERS, VERIFIED, activeOffers, offerMatches, isExpired, fmtDate } from './offers.js';
-import { lastPriceChange, daysAgoText, minutesAgoText } from './history.js';
+import { lastPriceChange, daysAgoText, minutesAgoText, weekdayPattern } from './history.js';
+import { snapshot, priceChanges, belowTarget } from './alerts.js';
+import { initTrip } from './trip-ui.js';
+import { initLog } from './log-ui.js';
 
 // ======================= Preferencias (solo en este navegador) =======================
 const PREFS_KEY = 'surtidor:v1:prefs';
 const DEFAULTS = {
   fuels: ['17', '1'], primary: '17', sort: 'price', radius: 10, openNow: false, lowcost: false, brand: '',
-  center: null, favorites: [], discounts: [], car: { ...SANDERO },
+  center: null, favorites: [], discounts: [], car: { ...SANDERO }, glpTarget: null, trip: null,
 };
 const prefs = (() => {
   let p;
@@ -189,6 +192,7 @@ function fitToRadius() {
 }
 map.on('zoomend', () => renderMarkers());
 map.on('moveend', () => {
+  if (tab === 'trip') { renderMarkers(); return; }
   if (programmatic) return;
   const c = map.getCenter();
   $('search-here').hidden = km(center, { lat: c.lat, lon: c.lng }) < Math.max(1, prefs.radius * 0.35);
@@ -197,6 +201,26 @@ $('search-here').addEventListener('click', () => {
   const c = map.getCenter();
   setCenter({ lat: c.lat, lon: c.lng, label: 'esta zona' }, { fit: false });
   $('search-here').hidden = true;
+});
+
+// ======================= Viaje y diario =======================
+// (las funciones a las que apuntan están más abajo; solo se llaman tras una acción del usuario)
+const shared = { L, map, $, esc, euros, priceText, priceHTML, fmtKm, prefs, savePrefs, car, fuelData, effective, openDetail: id => openDetail(id) };
+const trip = initTrip({
+  ...shared,
+  ensureFuel: (id, o) => ensureFuel(id, o),
+  getCenter: () => center,
+  redraw: () => renderMarkers(),
+  fit: bounds => {
+    programmatic = true;
+    map.fitBounds(bounds, { padding: [24, 24] });
+    setTimeout(() => { programmatic = false; }, 600);
+  },
+});
+const log = initLog({
+  ...shared,
+  gasRefNow: () => cheapestNear(car().gasFuel)?.eff ?? null,
+  onCarChange: () => update(),
 });
 
 // ======================= Controles =======================
@@ -233,14 +257,21 @@ for (const [id, key] of [['open-now', 'openNow'], ['lowcost', 'lowcost']]) {
 }
 $('brand').addEventListener('change', e => { prefs.brand = e.target.value; savePrefs(); update(); });
 
-for (const [id, t] of [['tab-near', 'near'], ['tab-fav', 'fav']]) {
-  $(id).addEventListener('click', () => {
-    tab = t;
-    $('tab-near').setAttribute('aria-selected', t === 'near');
-    $('tab-fav').setAttribute('aria-selected', t === 'fav');
-    renderList();
-  });
+const TABS = ['near', 'fav', 'trip', 'log'];
+function setTab(t) {
+  tab = t;
+  for (const k of TABS) $(`tab-${k}`).setAttribute('aria-selected', t === k);
+  $('view-list').hidden = t === 'trip' || t === 'log';
+  $('view-trip').hidden = t !== 'trip';
+  $('view-log').hidden = t !== 'log';
+  trip.show(t === 'trip');
+  log.show(t === 'log');
+  // En «Viaje» el mapa enseña la ruta; en el resto, el círculo del radio de búsqueda.
+  if (t === 'trip') radiusCircle.remove(); else radiusCircle.addTo(map);
+  if (t === 'trip') $('search-here').hidden = true;
+  renderList(); renderMarkers();
 }
+for (const k of TABS) $(`tab-${k}`).addEventListener('click', () => setTab(k));
 
 // ======================= Datos =======================
 function ensureFuel(id, opts) {
@@ -353,10 +384,84 @@ function update() {
     setStatus(`${n === 250 ? 'Más de 250' : n} gasolinera${n === 1 ? '' : 's'} con ${fuelById(prefs.primary).long} a menos de ${prefs.radius} km`);
   }
   renderUpdated();
+  renderOffline();
   renderCarStrip();
+  renderAlerts();
   renderList(); renderMarkers();
   computeFlags(list);
 }
+
+// ======================= Avisos al abrir =======================
+// 1) Qué ha cambiado en tus favoritas desde la última visita. 2) GLP por debajo de tu precio objetivo.
+const SEEN_KEY = 'surtidor:v1:visto';
+let seen = null;
+try { seen = JSON.parse(localStorage.getItem(SEEN_KEY) || 'null'); } catch { /* sin almacenamiento */ }
+const saveSeen = () => { try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch { /* sin almacenamiento */ } };
+let targetKey = '';
+function renderAlerts() {
+  const fuels = [...new Set([GLP, car().gasFuel])];
+  if (!fuels.every(f => fuelData.has(f))) return;
+  const priceOf = (id, f) => fuelData.get(f)?.prices.get(id);
+  const ids = [...favs];
+  const changes = seen?.p ? priceChanges(seen.p, ids, fuels, priceOf) : [];
+  const now = snapshot(ids, fuels, priceOf);
+  if (!changes.length) { seen = { t: Date.now(), p: now }; saveSeen(); }
+  else {
+    // Favoritas nuevas: se empiezan a seguir sin tocar los cambios pendientes de ver.
+    let added = false;
+    for (const id of ids) if (!seen.p[id] && now[id]) { seen.p[id] = now[id]; added = true; }
+    if (added) saveSeen();
+  }
+  // Precio objetivo: favoritas y gasolineras dentro del radio.
+  const cands = new Map();
+  const glp = fuelData.get(GLP);
+  if (prefs.glpTarget && glp) {
+    for (const id of ids) { const s = catalog.get(id), p = glp.prices.get(id); if (s && p != null) cands.set(id, { id, s, price: effective(s, p), d: center.example ? null : km(center, s) }); }
+    if (!center.example) {
+      for (const [id, p] of glp.prices) {
+        const s = catalog.get(id);
+        if (!s || cands.has(id) || Math.abs(s.lat - center.lat) > 0.5 || Math.abs(s.lon - center.lon) > 0.7) continue;
+        const d = km(center, s);
+        if (d <= prefs.radius) cands.set(id, { id, s, price: effective(s, p), d });
+      }
+    }
+  }
+  let hits = belowTarget([...cands.values()], prefs.glpTarget);
+  targetKey = hits.map(h => `${h.id}:${h.price.toFixed(3)}`).join('|') + `@${prefs.glpTarget}`;
+  if (prefs.targetSeen === targetKey) hits = [];
+
+  const cents = v => (Math.abs(v) * 100).toFixed(1).replace('.', ',');
+  const items = [
+    ...hits.map(h => `<li data-id="${h.id}" tabindex="0"><span class="a-tag down">Objetivo</span><span><b>GLP a ${priceText(h.price)} €/L</b> en ${esc(h.s.name)} (${esc(h.s.loc)}${h.d != null ? `, ${fmtKm(h.d)}` : ''}): igual o por debajo de tus ${priceText(prefs.glpTarget)} €/L.</span></li>`),
+    ...changes.map(c => {
+      const s = catalog.get(c.id);
+      if (!s) return '';
+      const down = c.diff < 0;
+      return `<li data-id="${c.id}" tabindex="0"><span class="a-tag ${down ? 'down' : 'up'}">${down ? '▼' : '▲'} ${cents(c.diff)} cént</span><span><b>${esc(s.name)}</b> (${esc(s.loc)}): ${esc(fuelById(c.fuel).label)} ${down ? 'baja' : 'sube'} de ${priceText(c.from)} a ${priceText(c.to)} €/L.</span></li>`;
+    }),
+  ].filter(Boolean);
+  $('alerts-title').textContent = changes.length && seen?.t
+    ? `Cambios en tus favoritas desde tu última visita (${minutesAgoText(Date.now() - seen.t)})`
+    : 'Aviso de precio';
+  $('alerts-list').innerHTML = items.join('');
+  $('alerts').hidden = !items.length;
+}
+$('alerts-ok').addEventListener('click', () => {
+  const fuels = [...new Set([GLP, car().gasFuel])];
+  seen = { t: Date.now(), p: snapshot([...favs], fuels, (id, f) => fuelData.get(f)?.prices.get(id)) };
+  saveSeen();
+  prefs.targetSeen = targetKey; savePrefs();
+  $('alerts').hidden = true;
+});
+$('alerts-list').addEventListener('click', e => { const li = e.target.closest('li[data-id]'); if (li) openDetail(li.dataset.id); });
+
+// ======================= Sin conexión =======================
+function renderOffline() {
+  const stale = [...fuelData.values()].some(d => d.offline);
+  $('offline').hidden = navigator.onLine && !stale;
+}
+window.addEventListener('offline', renderOffline);
+window.addEventListener('online', () => { renderOffline(); refreshAll(); });
 
 function rowHTML(x, tierOf, showDist = true) {
   const { s } = x;
@@ -427,6 +532,7 @@ function renderCarStrip() {
   el.innerHTML = `<div class="car-head"><span>Tu ${esc(c.name)}</span><button type="button" class="link" id="car-edit">Cambiar</button></div>
     <div class="car-cmp">${cell('GLP', g, cg)}${cell(fuelById(c.gasFuel).long, b, cb)}</div>
     ${verdict ? `<p class="car-verdict">${verdict}</p>` : ''}
+    ${dayLine(g)}
     <button type="button" class="offers-btn" id="open-offers">
       <span><b>${act.length} ofertas para ahorrar</b>${glpOffers ? ` · ${glpOffers} vale${glpOffers === 1 ? '' : 'n'} para GLP` : ''}</span>
       <span class="o-count">${applied ? `${applied} aplicada${applied === 1 ? '' : 's'}` : 'Ver'}</span>
@@ -434,6 +540,30 @@ function renderCarStrip() {
   el.hidden = false;
   $('car-edit').addEventListener('click', openSettings);
   $('open-offers').addEventListener('click', openOffers);
+}
+
+// ¿Qué día conviene repostar? Mediana diaria del GLP en la provincia durante 8 semanas.
+// Solo se afirma un «mejor día» si los datos lo confirman (ver weekdayPattern).
+const dayInfo = new Map();           // idProv -> null (calculando) | {r, prov}
+const PLURAL = { lunes: 'lunes', martes: 'martes', 'miércoles': 'miércoles', jueves: 'jueves', viernes: 'viernes', 'sábado': 'sábados', domingo: 'domingos' };
+function dayLine(g) {
+  if (!g) return '';
+  const info = dayInfo.get(g.s.idProv);
+  if (info === undefined) {
+    if (!navigator.onLine) return '';
+    dayInfo.set(g.s.idProv, null);
+    const prov = g.s.prov, idProv = g.s.idProv;
+    provinceDailyMedians(idProv, GLP, 56)
+      .then(pts => { dayInfo.set(idProv, { r: weekdayPattern(pts), prov }); renderCarStrip(); })
+      .catch(() => { dayInfo.set(idProv, { r: null, prov }); });
+    return '';
+  }
+  const r = info?.r;
+  if (!r) return '';
+  const cents = v => (Math.abs(v) * 100).toFixed(1).replace('.', ',');
+  return r.confirmed
+    ? `<p class="car-day" id="car-day"><b>Mejor día para repostar GLP en ${esc(info.prov)}: los ${PLURAL[r.best.name]}.</b> De media, ${cents(r.best.diff)} cént/L más barato que el resto de la semana (se cumplió ${r.best.hits} de ${r.best.n} semanas).</p>`
+    : `<p class="car-day" id="car-day"><b>¿Qué día repostar?</b> Da igual: en ${esc(info.prov)} el GLP cuesta prácticamente lo mismo cualquier día de la semana (${r.weeks} semanas analizadas, ${cents(r.spread)} cént/L entre el mejor y el peor día).</p>`;
 }
 
 function favRows() {
@@ -466,6 +596,7 @@ function renderList() {
 const PIN_W = 58, PIN_H = 26;
 function renderMarkers() {
   markers.clearLayers();
+  if (tab === 'trip' && trip.drawPins(markers, activeId)) { if (meMarker) meMarker.addTo(map); return; }
   const t = tiers(results);
   const shown = new Set();
   const placed = [];
@@ -558,6 +689,7 @@ function renderDetail(id, loadHistory) {
       <button type="button" class="btn" id="d-fav" aria-pressed="${isFav}">${isFav ? '★ En favoritas' : '☆ Guardar en favoritas'}</button>
       <a class="btn primary" href="${gmaps}" target="_blank" rel="noopener">Cómo llegar</a>
       <a class="btn" href="${amaps}" target="_blank" rel="noopener">Apple Mapas</a>
+      ${pPrim ? '<button type="button" class="btn" id="d-log">Apuntar repostaje aquí</button>' : ''}
     </div>
     <p class="src">Precios comunicados por la gasolinera al Ministerio${fecha ? ` (datos de ${esc(fecha)})` : ''}. El Ministerio no indica cuándo actualizó cada estación su precio, así que puede no coincidir con el surtidor.</p>`;
 
@@ -566,6 +698,14 @@ function renderDetail(id, loadHistory) {
     saveFavs(); renderDetail(id, false); update();
   });
   $('d-car-edit')?.addEventListener('click', openSettings);
+  $('d-log')?.addEventListener('click', () => {
+    const fuel = prefs.primary === GLP ? GLP : car().gasFuel;
+    const p = fuelData.get(fuel)?.prices.get(id) ?? pPrim;
+    const pb = fuelData.get(car().gasFuel)?.prices.get(id);
+    closeDetail();
+    setTab('log');
+    log.prefill({ station: `${s.name} (${s.loc})`, fuel, price: effective(s, p), gasRef: pb != null ? effective(s, pb) : null });
+  });
   if (pPrim && loadHistory) loadHist(s, prefs.primary, pPrim);
   else if (pPrim && lastHist?.id === id && lastHist.fuel === prefs.primary) { drawHist(lastHist.series); drawChange(lastHist.series); }
 }
@@ -654,7 +794,7 @@ function setCenter(c, { fit = true, save = true } = {}) {
   if (save && !c.example) { prefs.center = { lat: c.lat, lon: c.lon, label: c.label }; savePrefs(); }
   radiusCircle.setLatLng([c.lat, c.lon]);
   if (fit) fitToRadius(); else radiusCircle.setRadius(prefs.radius * 1000);
-  if (tab !== 'near') $('tab-near').click();
+  if (tab !== 'near') setTab('near');
   update();
 }
 
@@ -731,7 +871,7 @@ function renderDiscounts() {
 const CAR_FIELDS = ['name', 'glpL', 'glpCons', 'gasL', 'gasCons', 'gasFuel'];
 $('car-gasFuel').innerHTML = FUELS.filter(f => f.id !== GLP).map(f => `<option value="${f.id}">${esc(f.long)}</option>`).join('');
 function fillCarForm(c) { for (const k of CAR_FIELDS) $(`car-${k}`).value = c[k]; }
-function openSettings() { renderDiscounts(); fillCarForm(car()); dlg.showModal(); }
+function openSettings() { renderDiscounts(); fillCarForm(car()); $('glp-target').value = prefs.glpTarget ?? ''; dlg.showModal(); }
 $('open-settings').addEventListener('click', openSettings);
 $('car-reset').addEventListener('click', () => fillCarForm(SANDERO));
 $('disc-list').addEventListener('click', e => {
@@ -761,6 +901,12 @@ function saveCarFromForm() {
   savePrefs();
 }
 for (const k of CAR_FIELDS) $(`car-${k}`).addEventListener('change', () => { saveCarFromForm(); update(); });
+$('glp-target').addEventListener('change', e => {
+  const v = parseFloat(String(e.target.value).replace(',', '.'));
+  prefs.glpTarget = v >= 0.3 && v <= 3 ? Math.round(v * 1000) / 1000 : null;
+  delete prefs.targetSeen;
+  savePrefs(); renderAlerts();
+});
 $('car-reset').addEventListener('click', () => { saveCarFromForm(); update(); });
 dlg.addEventListener('close', () => {
   saveCarFromForm();
@@ -885,7 +1031,8 @@ async function refreshAll() {
   const res = await Promise.allSettled(fuels.map(f => ensureFuel(f, { force: true })));
   refreshing = false;
   update();
-  if (res.some(r => r.status === 'rejected')) setStatus('No se pudieron descargar todos los precios. Se muestran los últimos que tenías; vuelve a intentarlo en un momento.', true);
+  if (res.some(r => r.status === 'fulfilled' && r.value.offline)) setStatus('No hay conexión con el Ministerio: se mantienen los últimos precios guardados.', true);
+  else if (res.some(r => r.status === 'rejected')) setStatus('No se pudieron descargar todos los precios. Se muestran los últimos que tenías; vuelve a intentarlo en un momento.', true);
   if (activeId) renderDetail(activeId, false);
 }
 $('u-refresh').addEventListener('click', refreshAll);
@@ -897,3 +1044,23 @@ document.addEventListener('visibilitychange', () => {        // al volver a la a
     if (t && Date.now() - t > REFRESH_MS) refreshAll(); else renderUpdated();
   }
 });
+
+// ======================= Funcionar sin conexión =======================
+// El service worker guarda la propia web (HTML, código, iconos y fuentes) para poder abrirla sin
+// cobertura; los precios se guardan aparte en IndexedDB (ver api.js). Solo en la versión publicada.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', async () => {
+    try {
+      const base = new URL(import.meta.env.BASE_URL, location.origin).href;
+      await navigator.serviceWorker.register(`${base}sw.js`, { scope: base });
+      const reg = await navigator.serviceWorker.ready;
+      const send = prune => {
+        const urls = [location.href.split(/[?#]/)[0], ...performance.getEntriesByType('resource').map(e => e.name)
+          .filter(u => u.startsWith(base) || /^https:\/\/fonts\.(googleapis|gstatic)\.com\//.test(u))];
+        reg.active?.postMessage({ type: 'cache', urls: [...new Set(urls)], prune });
+      };
+      send(false);
+      setTimeout(() => send(true), 20000);      // para entonces ya se ha cargado también el mapa
+    } catch { /* sin service worker la web funciona igual, pero solo con conexión */ }
+  });
+}

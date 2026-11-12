@@ -2,6 +2,8 @@
 // La API permite CORS (*), así que se llama directamente desde el navegador.
 
 import { timeZoneFor } from './horario.js';
+import { idbGet, idbSet } from './store.js';
+import { median } from './history.js';
 
 const BASE = 'https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes';
 
@@ -45,28 +47,29 @@ async function getJSON(path, { timeout = 30000, retries = 1 } = {}) {
   }
 }
 
-// ---------- Caché local (localStorage, con tolerancia a errores) ----------
-const store = {
-  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
-};
+// ---------- Caché local (IndexedDB; ver store.js) ----------
 
 /** Catálogo de estaciones compartido por todos los combustibles. */
 export const catalog = new Map();
 const CAT_FIELDS = ['id', 'name', 'addr', 'cp', 'muni', 'loc', 'prov', 'idProv', 'idMuni', 'lat', 'lon', 'horario'];
 
-(function loadCatalogFromCache() {
-  const rows = store.get(KEY_CAT);
+/** Se resuelve cuando el catálogo guardado ya está en memoria. */
+const ready = (async () => {
+  // Versiones anteriores guardaban todo en localStorage: se libera ese espacio.
+  try {
+    for (const k of Object.keys(localStorage)) if (k === KEY_CAT || k.startsWith('surtidor:v1:precios:')) localStorage.removeItem(k);
+  } catch { /* sin almacenamiento */ }
+  const rows = await idbGet(KEY_CAT);
   if (!Array.isArray(rows)) return;
   for (const r of rows) {
     const s = Object.fromEntries(CAT_FIELDS.map((f, i) => [f, r[i]]));
     s.tz = timeZoneFor(s.idProv);
-    catalog.set(s.id, s);
+    if (!catalog.has(s.id)) catalog.set(s.id, s);
   }
 })();
 
 function saveCatalog() {
-  store.set(KEY_CAT, [...catalog.values()].map(s => CAT_FIELDS.map(f => s[f])));
+  return idbSet(KEY_CAT, [...catalog.values()].map(s => CAT_FIELDS.map(f => s[f])));
 }
 
 function tidy(text) {
@@ -102,14 +105,22 @@ export function parseFecha(s) {
  * Precios actuales de un combustible en toda España.
  * `fecha` es la hora a la que el Ministerio generó la respuesta (la de la consulta, no la del
  * último cambio de cada gasolinera); `fetchedAt` es cuándo los descargó esta web.
- * @returns {Promise<{fecha: string, prices: Map<string, number>, fromCache: boolean, fetchedAt: number}>}
+ * Sin conexión (o si el Ministerio no responde) se devuelven los últimos guardados, con `offline: true`.
+ * @returns {Promise<{fecha: string, prices: Map<string, number>, fromCache: boolean, fetchedAt: number, offline?: boolean}>}
  */
 export async function loadFuel(fuelId, { force = false } = {}) {
-  const cached = store.get(keyFuel(fuelId));
-  if (!force && cached && Date.now() - cached.t < CACHE_TTL && cached.p.every(([id]) => catalog.has(id))) {
-    return { fecha: cached.fecha, prices: new Map(cached.p), fromCache: true, fetchedAt: cached.t };
+  await ready;
+  const cached = await idbGet(keyFuel(fuelId));
+  const usable = cached && Array.isArray(cached.p) && cached.p.every(([id]) => catalog.has(id));
+  const fromCache = extra => ({ fecha: cached.fecha, prices: new Map(cached.p), fromCache: true, fetchedAt: cached.t, ...extra });
+  if (!force && usable && Date.now() - cached.t < CACHE_TTL) return fromCache();
+  let data;
+  try {
+    data = await getJSON(`EstacionesTerrestres/FiltroProducto/${fuelId}`);
+  } catch (err) {
+    if (usable) return fromCache({ offline: true });
+    throw err;
   }
-  const data = await getJSON(`EstacionesTerrestres/FiltroProducto/${fuelId}`);
   const prices = new Map();
   for (const e of data.ListaEESSPrecio) {
     const p = num(e.PrecioProducto);
@@ -121,7 +132,7 @@ export async function loadFuel(fuelId, { force = false } = {}) {
   }
   saveCatalog();
   const fetchedAt = Date.now();
-  store.set(keyFuel(fuelId), { t: fetchedAt, fecha: data.Fecha, p: [...prices] });
+  idbSet(keyFuel(fuelId), { t: fetchedAt, fecha: data.Fecha, p: [...prices] });
   return { fecha: data.Fecha, prices, fromCache: false, fetchedAt };
 }
 
@@ -171,6 +182,34 @@ export async function stationHistory(station, fuelId, { days = 30, step = 3 } = 
   return results
     .filter(r => r.status === 'fulfilled' && Number.isFinite(r.value.price))
     .map(r => r.value);
+}
+
+/**
+ * Mediana diaria del precio de un combustible en una provincia durante los últimos `days` días.
+ * Los días pasados no cambian, así que se guardan y solo se piden al Ministerio los que faltan.
+ * @returns {Promise<Array<{day: string, value: number}>>}
+ */
+export async function provinceDailyMedians(idProv, fuelId, days = 56) {
+  const key = `surtidor:v1:medianas:${idProv}:${fuelId}`;
+  const saved = (await idbGet(key)) || {};
+  const iso = n => { const [d, m, y] = ddmmyyyy(daysAgo(n)).split('-'); return `${y}-${m}-${d}`; };
+  const wanted = Array.from({ length: days }, (_, i) => i + 1);
+  const missing = wanted.filter(n => !(iso(n) in saved));
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(6, missing.length) }, async () => {
+    while (next < missing.length) {
+      const n = missing[next++];
+      try {
+        const m = await histOnce(`p:${ddmmyyyy(daysAgo(n))}:${idProv}:${fuelId}`,
+          `EstacionesTerrestresHist/FiltroProvinciaProducto/${ddmmyyyy(daysAgo(n))}/${idProv}/${fuelId}`);
+        saved[iso(n)] = m.size >= 3 ? median([...m.values()]) : null;
+      } catch { /* ese día se volverá a pedir otro rato */ }
+    }
+  }));
+  const keep = new Set(wanted.map(iso));
+  for (const d of Object.keys(saved)) if (!keep.has(d)) delete saved[d];
+  if (missing.length) idbSet(key, saved);
+  return Object.entries(saved).filter(([, v]) => v != null).map(([day, value]) => ({ day, value }));
 }
 
 // ---------- Búsqueda de lugares ----------
