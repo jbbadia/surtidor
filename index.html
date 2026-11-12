@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Surtidor · GLP y gasolina al mejor precio</title>
+  <meta name="description" content="Compara el precio del GLP y la gasolina en todas las gasolineras de España con los datos oficiales del Ministerio. Sin anuncios y sin registro.">
+  <meta name="theme-color" content="#1f56a8">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="./" aria-label="Surtidor, inicio">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="4" width="16" height="24" rx="2.5" fill="currentColor"/><rect x="6.5" y="8" width="9" height="6" rx="1" fill="var(--led)"/><path d="M19 11h3.5a2 2 0 0 1 2 2v9a1.75 1.75 0 0 0 3.5 0V12l-3-3.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Surtidor</span>
+    </a>
+    <form class="search" id="search" role="search" autocomplete="off">
+      <label for="q" class="sr-only">Municipio, código postal o dirección</label>
+      <input id="q" type="search" placeholder="Municipio, código postal o dirección" enterkeyhint="search" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false">
+      <ul id="suggest" class="suggest" role="listbox" hidden></ul>
+      <button type="button" id="locate" class="icon-btn" title="Usar mi ubicación" aria-label="Usar mi ubicación">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+    </form>
+    <button type="button" id="open-settings" class="icon-btn" aria-label="Mi coche y mis descuentos" title="Mi coche y mis descuentos">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+    </button>
+  </header>
+
+  <section class="controls" aria-label="Filtros">
+    <div class="row fuels" role="group" aria-label="Combustibles" id="fuels"></div>
+    <div class="row opts">
+      <label class="field"><span>Precio de</span><select id="primary"></select></label>
+      <div class="seg" role="group" aria-label="Ordenar por">
+        <button type="button" id="sort-price" aria-pressed="true">Más barata</button>
+        <button type="button" id="sort-dist" aria-pressed="false">Más cerca</button>
+        <button type="button" id="sort-save" aria-pressed="false" title="Lo que ahorras al llenar frente a la más cercana, descontando el combustible del desvío">Más ahorro</button>
+      </div>
+      <label class="field"><span>Radio</span>
+        <select id="radius"><option value="3">3 km</option><option value="5">5 km</option><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select>
+      </label>
+      <button type="button" class="toggle" id="open-now" aria-pressed="false">Abiertas ahora</button>
+      <button type="button" class="toggle" id="lowcost" aria-pressed="false" title="Plenoil, Ballenoil, Petroprix, bonÀrea, hipermercados…">Low cost</button>
+      <label class="field"><span>Marca</span><select id="brand"><option value="">Todas</option></select></label>
+    </div>
+  </section>
+
+  <main class="layout">
+    <aside class="panel" aria-label="Resultados">
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tab-near" aria-selected="true" aria-controls="list">Cerca de <span id="place-label">…</span></button>
+        <button role="tab" id="tab-fav" aria-selected="false" aria-controls="list">Favoritas <span id="fav-count" class="count"></span></button>
+      </div>
+      <div class="notice" id="notice" role="status" hidden><span id="notice-text"></span><button type="button" class="link" id="notice-close">Entendido</button></div>
+      <div class="car" id="car-strip" hidden></div>
+      <p class="status" id="status" aria-live="polite">Cargando precios del Ministerio…</p>
+      <ol class="list" id="list"></ol>
+    </aside>
+    <div class="map-wrap">
+      <div id="map" aria-label="Mapa de gasolineras"></div>
+      <button type="button" id="search-here" class="search-here" hidden>Buscar en esta zona</button>
+    </div>
+    <section id="detail" class="detail" hidden aria-labelledby="d-name" role="dialog">
+      <div class="detail-inner">
+        <button type="button" class="icon-btn close" id="d-close" aria-label="Cerrar ficha">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </button>
+        <div id="d-body"></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="settings" aria-labelledby="s-title">
+    <form method="dialog" class="settings">
+      <h2 id="s-title">Mi coche</h2>
+      <p class="hint">Con estos datos calculamos lo que te cuesta cada 100 km, cuánto pagas al llenar y si compensa desviarse. Si conoces tu consumo real, cámbialo: será más exacto que el homologado.</p>
+      <div class="car-form">
+        <label class="field wide"><span>Modelo</span><input id="car-name" type="text" maxlength="60"></label>
+        <label class="field wide"><span>GLP: litros por repostaje</span><input id="car-glpL" type="number" min="5" max="120" step="1" inputmode="numeric"></label>
+        <label class="field wide"><span>GLP: consumo (L/100 km)</span><input id="car-glpCons" type="number" min="2" max="25" step="0.1" inputmode="decimal"></label>
+        <label class="field wide"><span>Gasolina: litros por repostaje</span><input id="car-gasL" type="number" min="5" max="120" step="1" inputmode="numeric"></label>
+        <label class="field wide"><span>Gasolina: consumo (L/100 km)</span><input id="car-gasCons" type="number" min="2" max="25" step="0.1" inputmode="decimal"></label>
+        <label class="field wide"><span>Gasolina que usas</span><select id="car-gasFuel"></select></label>
+        <button type="button" id="car-reset" class="btn">Restablecer Dacia Sandero ECO-G 100 (2024)</button>
+      </div>
+      <h2>Mis descuentos</h2>
+      <p class="hint">Si tu tarjeta o club te descuenta en una marca, apúntalo y verás el precio que pagas de verdad. Se guarda solo en este navegador.</p>
+      <div id="disc-list" class="disc-list"></div>
+      <fieldset class="disc-add">
+        <legend>Añadir descuento</legend>
+        <label class="field"><span>Marca</span><input id="disc-brand" list="brands" placeholder="p. ej. REPSOL"></label>
+        <datalist id="brands"></datalist>
+        <label class="field"><span>Descuento</span><input id="disc-value" type="number" step="0.1" min="0" max="50" inputmode="decimal" placeholder="5"></label>
+        <label class="field"><span>Tipo</span><select id="disc-type"><option value="cent">cént/L</option><option value="pct">%</option></select></label>
+        <button type="button" id="disc-add" class="btn">Añadir</button>
+      </fieldset>
+      <div class="settings-actions"><button class="btn primary" value="ok">Hecho</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="offers" aria-labelledby="o-title">
+    <form method="dialog" class="settings">
+      <h2 id="o-title">Ofertas para ahorrar</h2>
+      <p class="hint" id="o-intro"></p>
+      <div id="o-list" class="offers"></div>
+      <div class="settings-actions"><button class="btn primary" value="ok">Hecho</button></div>
+    </form>
+  </dialog>
+
+  <footer class="foot">
+    <p>Precios oficiales que las gasolineras comunican al Ministerio (Geoportal de Gasolineras) y que pueden no coincidir con el surtidor. Web no oficial, sin anuncios, sin registro y sin rastreo. Mapa © OpenStreetMap.</p>
+  </footer>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
