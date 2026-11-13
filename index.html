@@ -122,6 +122,10 @@
             <select id="t-arrive"><option value="0">Me da igual</option><option value="0.25">Al menos a 1/4</option><option value="0.5">Al menos a la mitad</option><option value="0.75">Al menos a 3/4</option><option value="1">Lleno</option></select>
           </label>
           <label class="check"><input type="checkbox" id="t-round"> <span>Ida y vuelta</span></label>
+          <div class="t-opts">
+            <label class="field"><span>Salgo (vacío: ahora)</span><input type="datetime-local" id="t-when"></label>
+            <label class="field" id="t-back-wrap" hidden><span>Vuelvo (opcional)</span><input type="datetime-local" id="t-back"></label>
+          </div>
           <button class="btn primary" id="t-go">Calcular ruta</button>
         </form>
         <p class="t-status" id="t-status" aria-live="polite" hidden></p>

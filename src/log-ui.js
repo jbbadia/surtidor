@@ -1,6 +1,6 @@
 // Pestaña «Diario»: apuntar repostajes y ver consumo real, gasto por mes y ahorro con GLP.
 
-import { sanitizeEntry, logStats, toCSV } from './log.js';
+import { sanitizeEntry, logStats, toCSV, realGlpCons } from './log.js';
 import { GLP } from './car.js';
 import { fuelById } from './api.js';
 
@@ -131,5 +131,7 @@ export function initLog(ctx) {
   }
 
   resetForm();
-  return { show: on => { if (on) { fillFuels(); render(); } }, prefill, count: () => entries.length };
+  /** Consumo real de GLP redondeado a una décima, o null si aún no hay dos repostajes con km. */
+  const realCons = () => { const r = realGlpCons(entries, car()); return r ? Math.round(r.value * 10) / 10 : null; };
+  return { show: on => { if (on) { fillFuels(); render(); } }, prefill, count: () => entries.length, realCons, refresh: render };
 }

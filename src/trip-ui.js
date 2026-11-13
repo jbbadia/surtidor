@@ -1,6 +1,7 @@
 // Pestaña «Viaje»: formulario, cálculo de la ruta y dibujo de las paradas en el mapa.
 
-import { fetchRoute } from './route.js';
+import { fetchRoute, fetchVia } from './route.js';
+import { openStatus } from './horario.js';
 import { prepareRoute, alongRoute, thin, cheapPlan, fastPlan, withRank, detourKm } from './trip.js';
 import { GLP, tankFor, consFor } from './car.js';
 import { median } from './history.js';
@@ -15,6 +16,8 @@ const NEAR_KM = 0.5;                           // «junto a la ruta»
 const TURN_KM = 30;
 const uniq = list => [...new Map(list.map(s => [s.sid, s])).values()];
 const ARRIVE = { 0.25: '1/4', 0.5: 'la mitad', 0.75: '3/4', 1: 'el depósito lleno' };
+const WINDOW_KM = 15;                          // tramo de ruta, antes y después de la gasolinera, con el que se mide el desvío real
+const BAD_DETOUR_KM = 15;                      // si el desvío real supera en esto al estimado, la gasolinera se descarta
 const LEVELS = { 1: 'lleno', 0.75: 'a 3/4', 0.5: 'a la mitad', 0.25: 'a 1/4', 0.1: 'casi vacío' };
 
 export function initTrip(ctx) {
@@ -96,6 +99,9 @@ export function initTrip(ctx) {
     if (prefs.trip.arrive) $('t-arrive').value = String(prefs.trip.arrive);
     $('t-round').checked = !!prefs.trip.round;
   }
+  const syncBack = () => { $('t-back-wrap').hidden = !$('t-round').checked; };
+  $('t-round').addEventListener('change', syncBack);
+  syncBack();
 
   // ---------- Cálculo ----------
   function candidates(route, fuelId, corridor) {
@@ -127,11 +133,25 @@ export function initTrip(ctx) {
       const [r1, r2] = await Promise.all([fetchRoute(from, to), round ? fetchRoute(to, from) : null,
         ctx.ensureFuel(GLP).catch(() => null), ctx.ensureFuel(c.gasFuel).catch(() => null)]);
       const route1 = prepareRoute(r1.coords), route2 = r2 && prepareRoute(r2.coords);
+      const legs = [{ km: route1.km, seconds: r1.seconds }, ...(r2 ? [{ km: route2.km, seconds: r2.seconds }] : [])];
+      // Cuándo se sale: sirve para saber a qué hora se pasa por cada gasolinera y si estará abierta.
+      // De la vuelta solo se sabe si se indica.
+      const when = id => { const v = $(id).value, d = v ? new Date(v) : null; return d && !Number.isNaN(d.getTime()) ? d : null; };
+      const depart = [when('t-when') || new Date(), round ? when('t-back') : null];
+      const timed = x => {
+        const t0 = depart[x.leg];
+        if (!t0) return { ...x, eta: null, shut: false };
+        const eta = t0.getTime() + legs[x.leg].seconds * 1000 * Math.min(1, x.legAt / legs[x.leg].km);
+        const info = catalog.get(x.sid);
+        // Cerrada al llegar, o que cierra en la media hora siguiente: no se cuenta con ella.
+        const shut = [0, 30].some(m => openStatus(info.horario, new Date(eta + m * 60000), info.tz).state === 'closed');
+        return { ...x, eta, shut };
+      };
       // En ida y vuelta cada gasolinera puede aparecer dos veces: una a la ida y otra a la vuelta.
       const along = (fuelId, corridor) => {
-        const a = candidates(route1, fuelId, corridor).map(s => ({ ...s, sid: s.id, leg: 0, legAt: s.at }));
+        const a = candidates(route1, fuelId, corridor).map(s => timed({ ...s, sid: s.id, leg: 0, legAt: s.at }));
         if (!route2) return a;
-        const b = candidates(route2, fuelId, corridor).map(s => ({ ...s, sid: s.id, id: `${s.id}#v`, leg: 1, legAt: s.at, at: s.at + route1.km }));
+        const b = candidates(route2, fuelId, corridor).map(s => timed({ ...s, sid: s.id, id: `${s.id}#v`, leg: 1, legAt: s.at, at: s.at + route1.km }));
         const out = new Map(a.map(s => [s.sid, s]));
         return [...a, ...b.filter(s => !out.has(s.sid) || s.at - out.get(s.sid).at > TURN_KM)];
       };
@@ -152,18 +172,16 @@ export function initTrip(ctx) {
       };
       // Con cuánto se quiere llegar: esa parte del depósito, de la que el margen ya forma parte.
       o.arriveKm = arrive ? Math.max(0, arrive * rangeKm - o.reserveKm) : 0;
-      const fast = fastPlan(cands, o);
-      let cheap = cheapPlan(cands, o);
-      if (fast.gapKm <= cheap.gapKm && fast.net < cheap.net && fast.stops.length <= cheap.stops.length) cheap = fast;
       state = {
         from, to, round, coords: r2 ? [r1.coords, r2.coords] : [r1.coords], km: totalKm, seconds: r1.seconds + (r2 ? r2.seconds : 0),
-        legs: [{ km: route1.km, seconds: r1.seconds }, ...(r2 ? [{ km: route2.km, seconds: r2.seconds }] : [])],
+        legs, routes: [route1, ...(route2 ? [route2] : [])], depart,
         fuel, isGlp, level, arrive, cands, o, medGlp, medGas,
-        plans: { cheap, fast },
+        avoid: new Set(), real: new Map(), rounds: 0, plans: null,
       };
+      replan();
       prefs.trip = { from, to, level, arrive, round, fuel: isGlp ? 'glp' : 'gas', mode };
       savePrefs();
-      status('');
+      status(r1.stale || r2?.stale ? 'El servicio de rutas no responde: usamos la ruta que tenías guardada.' : '');
       render();
       drawRoute(true);
     } catch (err) {
@@ -173,9 +191,77 @@ export function initTrip(ctx) {
     }
   });
 
+  /** Calcula los dos planes con las gasolineras que valen: ni cerradas al pasar ni con un acceso imposible. */
+  function replan() {
+    const st = state;
+    const make = list => {
+      const fast = fastPlan(list, st.o);
+      let cheap = cheapPlan(list, st.o);
+      if (fast.gapKm <= cheap.gapKm && fast.net < cheap.net && fast.stops.length <= cheap.stops.length) cheap = fast;
+      return { cheap, fast };
+    };
+    const ok = st.cands.filter(s => !st.avoid.has(s.id));
+    const open = ok.filter(s => !s.shut);
+    let plans = make(open);
+    // Si sin las cerradas no se llega, mejor contar con ellas y avisar que quedarse sin combustible.
+    if (open.length < ok.length && (plans.cheap.gapKm > 0.5 || plans.fast.gapKm > 0.5)) {
+      const all = make(ok);
+      if (all.cheap.gapKm < plans.cheap.gapKm - 0.5 || all.fast.gapKm < plans.fast.gapKm - 0.5) plans = all;
+    }
+    st.plans = plans;
+  }
+
+  // ---------- Desvío real por carretera ----------
+  function vertexAt(route, at) {                 // vértice de la ruta más próximo a ese km
+    const pts = route.pts;
+    let lo = 0, hi = pts.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (pts[mid].at < at) lo = mid; else hi = mid; }
+    return at - pts[lo].at < pts[hi].at - at ? pts[lo] : pts[hi];
+  }
+  /** Km y minutos de más por pasar por la gasolinera, comparando dos rutas reales entre los mismos puntos. */
+  async function realDetour(st, x) {
+    const route = st.routes[x.leg || 0];
+    const a = vertexAt(route, Math.max(0, x.legAt - WINDOW_KM)), b = vertexAt(route, Math.min(route.km, x.legAt + WINDOW_KM));
+    if (b.at - a.at < 0.5) return null;
+    const [via, direct] = await Promise.all([fetchVia([a, x, b], false), fetchVia([a, b], false)]);
+    return { km: Math.max(0, via.km - direct.km), min: Math.max(0, (via.seconds - direct.seconds) / 60) };
+  }
+  let loading = false;
+  async function loadDetours() {
+    const st = state;
+    if (!st || loading) return;
+    const todo = st.plans[mode].stops.filter(x => x.off >= 0.3 && !st.real.has(x.id));
+    if (!todo.length) return;
+    loading = true;
+    try {
+      for (const x of todo) {
+        let d = null;
+        try { d = await realDetour(st, x); } catch { /* sin servicio de rutas: se queda la estimación */ }
+        if (state !== st) return;
+        st.real.set(x.id, d);
+        // Acceso solo por el otro sentido o rodeo enorme: esa gasolinera no vale para este viaje.
+        if (d && d.km - x.detourKm > BAD_DETOUR_KM) st.avoid.add(x.id);
+      }
+    } finally { loading = false; }
+    if (state !== st) return;
+    if (st.avoid.size && st.rounds < 3 && st.plans[mode].stops.some(x => st.avoid.has(x.id))) { st.rounds++; replan(); }
+    render(); ctx.redraw();
+  }
+
   // ---------- Resultado ----------
   const hm = sec => { const m = Math.round(sec / 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
   const stopsText = n => `${n} parada${n === 1 ? '' : 's'}`;
+
+  /** Desvío total del plan: el real por carretera cuando ya se ha podido medir; si no, el estimado. */
+  function detourText(p) {
+    const off = p.stops.filter(x => x.off >= 0.3);
+    const real = off.map(x => state.real.get(x.id));
+    if (off.length && real.every(Boolean)) {
+      const km = real.reduce((t, d) => t + d.km, 0), min = real.reduce((t, d) => t + d.min, 0);
+      return km >= 0.5 || min >= 1 ? ` · ${num(km, 0)} km y unos ${Math.round(min)} min de desvío por carretera` : ' · casi sin desvío';
+    }
+    return p.detourKm >= 0.5 ? ` · unos ${num(p.detourKm, 0)} km de desvío en total` : ' · casi sin desvío';
+  }
 
   function planSummary(p, other) {
     const { o, isGlp, level, cands } = state;
@@ -196,7 +282,7 @@ export function initTrip(ctx) {
     } else {
       const line = t => `<span class="t-line">${t}</span>`;
       html = `<span class="t-head"><b>${stopsText(p.stops.length)}</b> · pagas <b>${euros(p.paid)}</b></span>`
-        + line(`${num(p.litres)} L de ${name} a ${priceText(p.paid / p.litres)} €/L de media${p.detourKm >= 0.5 ? ` · unos ${num(p.detourKm, 0)} km de desvío en total` : ' · casi sin desvío'}`);
+        + line(`${num(p.litres)} L de ${name} a ${priceText(p.paid / p.litres)} €/L de media${detourText(p)}`);
       if (petrol) html += line(`Ojo: ${petrol}.`);
       const diff = other.net - p.net;      // contando lo que sobra en el depósito al llegar
       if (mode === 'cheap' && diff > 0.05) html += line(`Ahorras <b class="good">${euros(diff)}</b> frente a la ruta más rápida.`);
@@ -210,7 +296,8 @@ export function initTrip(ctx) {
 
   /** Parada opcional cuando no hace falta repostar: así cada modo enseña siempre su gasolinera. */
   function optionalStop() {
-    const { cands } = state;
+    const usable = state.cands.filter(s => !s.shut && !state.avoid.has(s.id));
+    const cands = usable.length ? usable : state.cands;
     if (!cands.length) return null;
     if (mode === 'cheap') return cands.reduce((m, s) => (s.rank < m.rank ? s : m));
     const near = cands.filter(s => s.off <= NEAR_KM);
@@ -225,13 +312,30 @@ export function initTrip(ctx) {
       : n ? `<div class="t-do">${x.full ? `<b>Llena el depósito</b> · unos ${num(x.litres, 0)} L` : `Echa al menos <b>${num(x.litres)} L</b>`} · ${euros(x.cost)}</div>`
       : '';
     const where = state.round ? (x.leg ? 'la vuelta' : 'la ida') : 'la ruta';
+    const fuelCost = kms => euros(kms * state.o.cons / 100 * x.price);
+    const rd = state.real.get(x.id);
+    const detour = x.off < 0.3 ? 'Junto a la ruta'
+      : rd ? `A ${num(x.off)} km de la ruta · desvío por carretera: ${num(rd.km, 0)} km y unos ${Math.round(rd.min)} min (≈ ${fuelCost(rd.km)})`
+      : `A ${num(x.off)} km de la ruta · desviarte cuesta unos ${fuelCost(detourKm(x))}`;
+    let pass = '';
+    if (x.eta) {
+      const os = openStatus(s.horario, new Date(x.eta), s.tz);
+      const d = new Date(x.eta), hhmm = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+      const day = d.toDateString() === new Date().toDateString() ? '' : ` del ${d.toLocaleDateString('es-ES', { weekday: 'long' })}`;
+      const st = os.state === 'closed' ? `<span class="closed">${esc(os.label.replace(' ahora', ''))}: estará cerrada</span>`
+        : x.shut ? `<span class="warn-t">${esc(os.label)}: vas muy justo</span>`
+        : os.state === 'unknown' ? 'horario no claro, compruébalo'
+        : `<span class="open">${esc(os.label.replace(' ahora', ''))}</span>`;
+      pass = `<div class="ad">Pasas hacia las ${hhmm}${day} · ${st}</div>`;
+    }
     return `<li class="t-stop" data-id="${x.sid}" tabindex="0">
       ${n ? `<span class="t-n">${n}</span>` : ''}
       <div class="t-main">
         <div class="nm">${esc(s.name)}</div>
         <div class="ad">Km ${Math.round(x.legAt)} de ${where} · ${esc(s.loc)} (${esc(s.prov)})</div>
         ${sub}
-        <div class="ad">${x.off < 0.3 ? 'Junto a la ruta' : `A ${num(x.off)} km de la ruta · desviarte cuesta unos ${euros(detourKm(x) * state.o.cons / 100 * x.price)}`}${s.horario ? ` · ${esc(s.horario)}` : ''}</div>
+        ${pass}
+        <div class="ad">${detour}${s.horario ? ` · ${esc(s.horario)}` : ''}</div>
       </div>
       <div class="price">${ctx.priceHTML(x.price)}<span class="u">€/L</span></div>
     </li>`;
@@ -325,7 +429,8 @@ export function initTrip(ctx) {
         <a class="btn primary" href="${esc(gmaps)}" target="_blank" rel="noopener">Abrir la ruta en Google Maps${p.stops.length ? ' con las paradas' : ''}</a>
       </div>
       ${cheapest.length ? `<details class="t-all"><summary>Las ${cheapest.length} más baratas de la ruta (${all.length} gasolineras con ${isGlp ? 'GLP' : 'gasolina'} a menos de ${isGlp ? GLP_CORRIDOR : GAS_CORRIDOR} km)</summary><ol class="t-stops">${cheapest.map(x => stopRow(x, 0)).join('')}</ol></details>` : ''}
-      <p class="src">${isGlp ? 'El plan no cuenta con la gasolina: si el GLP no llega, para antes. ' : ''}Donde pone «al menos», son los litros mínimos para llegar con unos ${Math.round(o.reserveKm)} km de margen; si prefieres llenar, mejor en la parada más barata. Consumo de «Mi coche» (${num(o.cons)} L/100 km): en autovía suele ser algo mayor. Ruta y tiempos de OSRM (OpenStreetMap); la distancia a la ruta es en línea recta. Los precios pueden cambiar antes de que llegues.</p>`;
+      <p class="src">${isGlp ? 'El plan no cuenta con la gasolina: si el GLP no llega, para antes. ' : ''}Donde pone «al menos», son los litros mínimos para llegar con unos ${Math.round(o.reserveKm)} km de margen; si prefieres llenar, mejor en la parada más barata. Consumo de «Mi coche» (${num(o.cons)} L/100 km): en autovía suele ser algo mayor. Ruta y tiempos de OSRM (OpenStreetMap), sin contar descansos ni atascos; el desvío de cada parada se mide por carretera en cuanto se puede. ${state.depart[1] || !round ? 'No' : 'A la ida no'} se proponen gasolineras que estarán cerradas cuando pases${round && !state.depart[1] ? ' (para la vuelta, indica cuándo vuelves)' : ''}. Los precios pueden cambiar antes de que llegues.</p>`;
+    loadDetours();
   }
 
   $('t-result').addEventListener('click', e => {

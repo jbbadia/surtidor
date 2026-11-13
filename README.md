@@ -61,13 +61,17 @@ Pestaña «Viaje». Con la salida y el destino (y, si se marca, **ida y vuelta**
 - Enseña el viaje en orden: salida, paradas numeradas (con «Llena el depósito» o «Echa al menos X L»), tramos con gasolina y llegada; en ida y vuelta, separado en «Ida» y «Vuelta». En ida y vuelta, una gasolinera junto al destino cuenta como una sola parada.
 - Dibuja la ruta y las paradas en el mapa con su número (una gasolinera usada a la ida y a la vuelta lleva los dos, «1·4») y abre la ruta con sus paradas en Google Maps.
 
-Donde pone «al menos», los litros son los mínimos para llegar con unos 30 km de margen. La distancia de cada gasolinera a la ruta es en línea recta (GLP: hasta 12 km; gasolina: hasta 6 km).
+- Con la **hora de salida** (por defecto, ahora; en ida y vuelta se puede indicar también la de vuelta) calcula a qué hora pasas por cada gasolinera y **no propone las que estarán cerradas** o cierran en la media hora siguiente. Si sin ellas no se llega, las usa y avisa.
+- El **desvío de cada parada se mide por carretera** (dos rutas reales entre los mismos puntos, con y sin la gasolinera) y se enseña en km, minutos y euros. Si el rodeo real supera en más de 15 km al estimado (acceso solo por el otro sentido, por ejemplo), la gasolinera se descarta y se recalcula.
+- Las últimas 6 rutas se guardan en el dispositivo 30 días: repetir un viaje no llama al servidor, y si el servidor de rutas está caído se usa la guardada.
+
+Donde pone «al menos», los litros son los mínimos para llegar con unos 30 km de margen. Para elegir las gasolineras candidatas se usa la distancia en línea recta a la ruta (GLP: hasta 12 km; gasolina: hasta 6 km).
 
 ## Diario de repostajes
 
 Pestaña «Diario» (o «Apuntar repostaje aquí» en la ficha de una gasolinera). Se guarda solo en el dispositivo y calcula (`src/log.js`):
 - **Gasto por mes**, separado en GLP y gasolina.
-- **Consumo real de GLP**, con los km del coche de dos repostajes de GLP (supone que llenas; descuenta los km hechos con la gasolina repostada entre medias). Con un toque se pasa a «Mi coche».
+- **Consumo real de GLP**, con los km del coche de dos repostajes de GLP (supone que llenas; descuenta los km hechos con la gasolina repostada entre medias). Con un toque se pasa a «Mi coche», y si no coincide con el que tienes puesto, la web te lo propone al abrirla.
 - **Ahorro por ir con GLP**: lo que habrían costado esos km con gasolina al precio de ese día.
 
 Se puede exportar a CSV para Excel o Numbers.
@@ -120,6 +124,6 @@ Se puede exportar a CSV para Excel o Numbers.
 ## Limitaciones conocidas
 
 - El Ministerio da **una fecha global** de actualización, no una por estación: ningún precio puede garantizarse en el surtidor. La web lo indica siempre.
-- Los horarios con un solo día suelto (`L: 24H`, ~450 estaciones) son ambiguos y se muestran como «Horario no claro».
-- Los servidores públicos de rutas (OSRM) y de mapas (OpenFreeMap) son gratuitos y sin garantía: valen para uso personal, no para muchas visitas.
-- En el viaje, el desvío a cada gasolinera es una estimación en línea recta y no se tiene en cuenta si estará abierta cuando llegues.
+- Los horarios que solo nombran el lunes (`L: 24H`, unas 490 estaciones) se toman como «todos los días» y se marcan con «(probable)»: el 13/11/2026, en 488 de las 498 estaciones con un solo día el día era «L», el valor por defecto del formulario. Con otro día suelto (10 estaciones) se sigue mostrando «Horario no claro».
+- Los servidores públicos de rutas (OSRM) y de mapas (OpenFreeMap) son gratuitos y sin garantía: valen para uso personal, no para muchas visitas. Hay dos servidores de rutas y las rutas ya calculadas se guardan, pero una ruta nueva con los dos caídos no se puede calcular.
+- En el viaje, las horas de paso salen de los tiempos de OSRM, sin descansos ni atascos; y de la vuelta solo se sabe si estará abierta una gasolinera si indicas cuándo vuelves.

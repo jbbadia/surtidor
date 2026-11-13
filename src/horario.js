@@ -14,8 +14,10 @@ function toMin(hhmm) {
 }
 
 /**
- * @returns {{week: Array<Array<[number, number]>>, ambiguous: boolean} | null}
+ * @returns {{week: Array<Array<[number, number]>>, ambiguous: boolean, assumed: boolean} | null}
  *   week[0] = lunes … week[6] = domingo, con tramos en minutos [inicio, fin).
+ *   `assumed`: el texto solo nombraba el lunes y se ha tomado como «todos los días».
+ *   `ambiguous`: un único día suelto que no es lunes; no se da por bueno.
  *   null si el texto no se puede interpretar.
  */
 export function parseHorario(text) {
@@ -23,6 +25,14 @@ export function parseHorario(text) {
   const week = Array.from({ length: 7 }, () => []);
   const segments = text.split(';').map(s => s.trim()).filter(Boolean);
   if (!segments.length) return null;
+
+  // Un único tramo de un solo día ("L: 24H", "L: 06:00-22:00"). El 13/11/2026 eran 498 estaciones
+  // y en 488 el día era «L»: es el valor por defecto del formulario del Ministerio y quiere decir
+  // «todos los días», así que se interpreta como L-D (marcándolo como supuesto). Si el día suelto
+  // es otro (10 estaciones), no hay forma de saberlo y se deja como dudoso.
+  const lone = segments.length === 1 && /^[LMXJVSD]:/.test(segments[0]);
+  const assumed = lone && segments[0][0] === 'L';
+  if (assumed) segments[0] = `L-D${segments[0].slice(1)}`;
 
   for (const seg of segments) {
     const m = /^([LMXJVSD])(?:-([LMXJVSD]))?:\s*(.+)$/.exec(seg);
@@ -59,10 +69,7 @@ export function parseHorario(text) {
     }
   }
 
-  // Un único tramo de un solo día ("L: 24H", "L: 06:00-22:00") aparece en cientos de
-  // estaciones y casi seguro significa "todos los días": no lo damos por bueno.
-  const ambiguous = segments.length === 1 && /^[LMXJVSD]:/.test(segments[0]);
-  return { week, ambiguous };
+  return { week, ambiguous: lone && !assumed, assumed };
 }
 
 const TZ_PENINSULA = 'Europe/Madrid';
@@ -90,11 +97,17 @@ function fmt(min) {
 
 /**
  * Estado de apertura.
- * @returns {{state: 'open'|'closed'|'unknown', label: string}}
+ * @returns {{state: 'open'|'closed'|'unknown', label: string, assumed?: boolean}}
+ *   `assumed`: el horario publicado solo nombraba el lunes (ver parseHorario); la etiqueta lo avisa.
  */
 export function openStatus(text, date = new Date(), timeZone = TZ_PENINSULA) {
   const h = parseHorario(text);
   if (!h || h.ambiguous) return { state: 'unknown', label: 'Horario no claro' };
+  const r = statusOf(h, date, timeZone);
+  return h.assumed ? { ...r, label: `${r.label} (probable)`, assumed: true } : r;
+}
+
+function statusOf(h, date, timeZone) {
   const { day, minute } = localDayMinute(date, timeZone);
   const today = h.week[day];
   const isAllDay = r => r[0] === 0 && r[1] === DAY_MIN;

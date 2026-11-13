@@ -41,10 +41,25 @@ test('rango que cruza la medianoche pasa al día siguiente', () => {
   assert.equal(openStatus('L-D: 22:00-06:00', WED_2330).state, 'open');
 });
 
-test('un solo día suelto es ambiguo', () => {
-  assert.equal(parseHorario('L: 24H').ambiguous, true);
-  assert.equal(openStatus('L: 06:00-22:00', WED_NOON).state, 'unknown');
+test('un lunes suelto se toma como todos los días, avisando', () => {
+  const h = parseHorario('L: 24H');
+  assert.equal(h.ambiguous, false);
+  assert.equal(h.assumed, true);
+  assert.ok(h.week.every(d => d.length === 1 && d[0][0] === 0 && d[0][1] === 1440));
+  const st = openStatus('L: 06:00-22:00', WED_NOON);
+  assert.equal(st.state, 'open');
+  assert.equal(st.assumed, true);
+  assert.match(st.label, /cierra 22:00 \(probable\)/);
+  assert.match(openStatus('L: 24H', WED_NOON).label, /^Abierta 24 h \(probable\)$/);
+  // Un horario normal no lleva el aviso.
+  assert.equal(openStatus('L-D: 24H', WED_NOON).assumed, undefined);
 });
+
+test('otro día suelto sigue siendo dudoso', () => {
+  assert.equal(parseHorario('D: 24H').ambiguous, true);
+  assert.equal(openStatus('S: 08:00-14:00', WED_NOON).state, 'unknown');
+});
+
 
 test('texto no interpretable', () => {
   assert.equal(parseHorario('abierto a veces'), null);

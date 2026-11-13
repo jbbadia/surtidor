@@ -269,6 +269,7 @@ function setTab(t) {
   // En «Viaje» el mapa enseña la ruta; en el resto, el círculo del radio de búsqueda.
   if (t === 'trip') radiusCircle.remove(); else radiusCircle.addTo(map);
   if (t === 'trip') $('search-here').hidden = true;
+  if (t === 'near' || t === 'fav') renderAlerts();        // p. ej. consumo real recién apuntado en el diario
   renderList(); renderMarkers();
 }
 for (const k of TABS) $(`tab-${k}`).addEventListener('click', () => setTab(k));
@@ -397,7 +398,7 @@ const SEEN_KEY = 'surtidor:v1:visto';
 let seen = null;
 try { seen = JSON.parse(localStorage.getItem(SEEN_KEY) || 'null'); } catch { /* sin almacenamiento */ }
 const saveSeen = () => { try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch { /* sin almacenamiento */ } };
-let targetKey = '';
+let targetKey = '', consKey = null;
 function renderAlerts() {
   const fuels = [...new Set([GLP, car().gasFuel])];
   if (!fuels.every(f => fuelData.has(f))) return;
@@ -430,8 +431,16 @@ function renderAlerts() {
   targetKey = hits.map(h => `${h.id}:${h.price.toFixed(3)}`).join('|') + `@${prefs.glpTarget}`;
   if (prefs.targetSeen === targetKey) hits = [];
 
+  // Consumo real del diario distinto del de «Mi coche»: se propone usarlo (una vez por cada valor).
+  const comma = v => String(v).replace('.', ',');
+  const real = log.realCons();
+  const consItem = real && Math.abs(real - car().glpCons) >= 0.2 && prefs.consSeen !== real
+    ? `<li><span class="a-tag info">Consumo</span><span>Según tu diario, tu consumo real de GLP es <b>${comma(real.toFixed(1))} L/100 km</b>; en «Mi coche» pone ${comma(car().glpCons)}. <button type="button" class="link" data-cons="${real}">Usar ${comma(real.toFixed(1))} en todos los cálculos</button></span></li>` : '';
+  consKey = consItem ? real : null;
+
   const cents = v => (Math.abs(v) * 100).toFixed(1).replace('.', ',');
   const items = [
+    consItem,
     ...hits.map(h => `<li data-id="${h.id}" tabindex="0"><span class="a-tag down">Objetivo</span><span><b>GLP a ${priceText(h.price)} €/L</b> en ${esc(h.s.name)} (${esc(h.s.loc)}${h.d != null ? `, ${fmtKm(h.d)}` : ''}): igual o por debajo de tus ${priceText(prefs.glpTarget)} €/L.</span></li>`),
     ...changes.map(c => {
       const s = catalog.get(c.id);
@@ -450,10 +459,16 @@ $('alerts-ok').addEventListener('click', () => {
   const fuels = [...new Set([GLP, car().gasFuel])];
   seen = { t: Date.now(), p: snapshot([...favs], fuels, (id, f) => fuelData.get(f)?.prices.get(id)) };
   saveSeen();
-  prefs.targetSeen = targetKey; savePrefs();
+  prefs.targetSeen = targetKey;
+  if (consKey != null) prefs.consSeen = consKey;
+  savePrefs();
   $('alerts').hidden = true;
 });
-$('alerts-list').addEventListener('click', e => { const li = e.target.closest('li[data-id]'); if (li) openDetail(li.dataset.id); });
+$('alerts-list').addEventListener('click', e => {
+  const b = e.target.closest('[data-cons]');
+  if (b) { prefs.car = { ...car(), glpCons: +b.dataset.cons }; savePrefs(); log.refresh(); update(); return; }
+  const li = e.target.closest('li[data-id]'); if (li) openDetail(li.dataset.id);
+});
 
 // ======================= Sin conexión =======================
 function renderOffline() {
@@ -692,7 +707,8 @@ function renderDetail(id, loadHistory) {
     ${activeOffers().filter(o => offerMatches(o, s.name) && !hasOffer(o.id)).map(o => `<div class="d-offer"><p class="eyebrow">Oferta en esta gasolinera</p>${offerCard(o, true)}</div>`).join('')}
     ${carSection(s)}
     <div class="d-sec"><h3>Horario</h3>
-      <dl class="kv"><dt>Ahora</dt><dd class="${st.state}">${esc(st.label)}</dd><dt>Publicado</dt><dd>${esc(s.horario || 'Sin datos')}</dd></dl></div>
+      <dl class="kv"><dt>Ahora</dt><dd class="${st.state}">${esc(st.label)}</dd><dt>Publicado</dt><dd>${esc(s.horario || 'Sin datos')}</dd></dl>
+      ${st.assumed ? '<p class="src">El horario publicado solo nombra el lunes. En casi todas las gasolineras eso quiere decir «todos los días», y así lo tomamos; si vas justo de hora, confírmalo.</p>' : ''}</div>
     ${pPrim ? `<div class="d-sec"><h3>Últimos 30 días · ${esc(fuelById(prefs.primary).label)}</h3><div id="d-hist"><p class="src">Cargando histórico del Ministerio…</p></div></div>` : ''}
     <div class="actions">
       <button type="button" class="btn" id="d-fav" aria-pressed="${isFav}">${isFav ? '★ En favoritas' : '☆ Guardar en favoritas'}</button>
