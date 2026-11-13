@@ -161,7 +161,10 @@ export function initTrip(ctx) {
       const medGas = gas.length ? median(uniq(gas).map(s => s.price)) : null;
       const isGlp = fuel === GLP;
       const cons = consFor(c, fuel), rangeKm = (tankFor(c, fuel) / cons) * 100;
-      const cands = withRank(isGlp ? glp : thin(gas, 10, 2), cons, tankFor(c, fuel) * 0.6);
+      // Las que estarán cerradas cuando pases no cuentan para nada: ni en el plan, ni en el mapa, ni en las listas.
+      const every = isGlp ? glp : gas, open = every.filter(s => !s.shut);
+      const hidden = new Set(every.map(s => s.sid)).size - new Set(open.map(s => s.sid)).size;
+      const cands = withRank(isGlp ? open : thin(open, 10, 2), cons, tankFor(c, fuel) * 0.6);
       const totalKm = route1.km + (route2 ? route2.km : 0);
       const o = {
         totalKm, rangeKm, startKm: level * rangeKm, cons,
@@ -175,7 +178,7 @@ export function initTrip(ctx) {
       state = {
         from, to, round, coords: r2 ? [r1.coords, r2.coords] : [r1.coords], km: totalKm, seconds: r1.seconds + (r2 ? r2.seconds : 0),
         legs, routes: [route1, ...(route2 ? [route2] : [])], depart,
-        fuel, isGlp, level, arrive, cands, o, medGlp, medGas,
+        fuel, isGlp, level, arrive, cands, hidden, o, medGlp, medGas,
         avoid: new Set(), real: new Map(), rounds: 0, plans: null,
       };
       replan();
@@ -191,7 +194,7 @@ export function initTrip(ctx) {
     }
   });
 
-  /** Calcula los dos planes con las gasolineras que valen: ni cerradas al pasar ni con un acceso imposible. */
+  /** Calcula los dos planes con las gasolineras que valen (las cerradas al pasar ya no están en `cands`), sin las de acceso imposible. */
   function replan() {
     const st = state;
     const make = list => {
@@ -200,15 +203,7 @@ export function initTrip(ctx) {
       if (fast.gapKm <= cheap.gapKm && fast.net < cheap.net && fast.stops.length <= cheap.stops.length) cheap = fast;
       return { cheap, fast };
     };
-    const ok = st.cands.filter(s => !st.avoid.has(s.id));
-    const open = ok.filter(s => !s.shut);
-    let plans = make(open);
-    // Si sin las cerradas no se llega, mejor contar con ellas y avisar que quedarse sin combustible.
-    if (open.length < ok.length && (plans.cheap.gapKm > 0.5 || plans.fast.gapKm > 0.5)) {
-      const all = make(ok);
-      if (all.cheap.gapKm < plans.cheap.gapKm - 0.5 || all.fast.gapKm < plans.fast.gapKm - 0.5) plans = all;
-    }
-    st.plans = plans;
+    st.plans = make(st.cands.filter(s => !st.avoid.has(s.id)));
   }
 
   // ---------- Desvío real por carretera ----------
@@ -267,14 +262,16 @@ export function initTrip(ctx) {
     const { o, isGlp, level, cands } = state;
     const name = isGlp ? 'GLP' : 'gasolina';
     const petrol = isGlp && p.gapKm > 0.5
-      ? `hay <b>${num(p.gapKm, 0)} km sin ninguna gasolinera con GLP a tu alcance</b>: ahí el coche pasará solo a gasolina${o.gapCostPerKm ? ` (≈ ${euros(p.gapKm * o.gapCostPerKm)})` : ''}` : '';
+      ? `hay <b>${num(p.gapKm, 0)} km sin ninguna gasolinera con GLP ${state.hidden ? 'abierta ' : ''}a tu alcance</b>: ahí el coche pasará solo a gasolina${o.gapCostPerKm ? ` (≈ ${euros(p.gapKm * o.gapCostPerKm)})` : ''}` : '';
     let html;
     if (!p.stops.length && !p.gapKm) {
       html = `<b>No necesitas repostar.</b> Con el depósito ${LEVELS[level] || 'así'} tienes para unos ${Math.round(o.startKm)} km de ${name} y el viaje son ${Math.round(o.totalKm)} km${state.round ? ' entre ida y vuelta' : ''}${state.arrive ? `: llegas con ${ARRIVE[state.arrive] || 'lo que pedías'} o más` : ''}. ${mode === 'cheap'
         ? 'Si aun así quieres llenar por el camino, esta es la más barata de la ruta contando el desvío:'
         : 'Si aun así quieres llenar por el camino, esta es la más barata de las que están junto a la carretera:'}`;
     } else if (!p.stops.length && !cands.length) {
-      html = `<b>No hay gasolineras con ${name} junto a esta ruta.</b>`;
+      html = state.hidden
+        ? `<b>No hay gasolineras con ${name} abiertas junto a esta ruta a la hora en que pasas.</b> ${state.hidden === 1 ? 'Hay 1 que estará cerrada' : `Hay ${state.hidden} que estarán cerradas`}: prueba con otra hora de salida.`
+        : `<b>No hay gasolineras con ${name} junto a esta ruta.</b>`;
     } else if (!p.stops.length) {
       html = isGlp
         ? `<b>Sin paradas posibles.</b> En esta ruta ${petrol}. Sal con el depósito más lleno si puedes.`
@@ -296,7 +293,7 @@ export function initTrip(ctx) {
 
   /** Parada opcional cuando no hace falta repostar: así cada modo enseña siempre su gasolinera. */
   function optionalStop() {
-    const usable = state.cands.filter(s => !s.shut && !state.avoid.has(s.id));
+    const usable = state.cands.filter(s => !state.avoid.has(s.id));
     const cands = usable.length ? usable : state.cands;
     if (!cands.length) return null;
     if (mode === 'cheap') return cands.reduce((m, s) => (s.rank < m.rank ? s : m));
@@ -353,7 +350,7 @@ export function initTrip(ctx) {
       return legOf(a) === legOf(b) ? `Del km ${kmIn(a)} al ${kmIn(b)}${legName(a)}` : `Del km ${kmIn(a)}${legName(a)} al ${kmIn(b)}${legName(b)}`;
     };
     const gapRow = g => `<li class="t-gap"><span class="t-n g" aria-hidden="true">!</span><div class="t-main">${isGlp
-      ? `<div class="t-do"><b>Unos ${num(g.km, 0)} km con gasolina</b>${o.gapCostPerKm ? ` · ≈ ${euros(g.km * o.gapCostPerKm)}` : ''}</div><div class="ad">${span(g)} no hay ninguna gasolinera con GLP a tu alcance: el coche pasa solo a gasolina.</div>`
+      ? `<div class="t-do"><b>Unos ${num(g.km, 0)} km con gasolina</b>${o.gapCostPerKm ? ` · ≈ ${euros(g.km * o.gapCostPerKm)}` : ''}</div><div class="ad">${span(g)} no hay ninguna gasolinera con GLP ${state.hidden ? 'abierta ' : ''}a tu alcance: el coche pasa solo a gasolina.</div>`
       : `<div class="t-do"><b>${num(g.km, 0)} km sin cubrir</b></div><div class="ad">${span(g)} no hay gasolineras a tiro. Sal con más combustible.</div>`}</div></li>`;
     const events = [
       ...p.stops.map((x, i) => ({ at: x.at, leg: x.leg, html: stopRow(x, i + 1) })),
@@ -428,8 +425,8 @@ export function initTrip(ctx) {
         <ol class="t-stops t-itin" id="t-stops">${itinerary(p, opt)}</ol>
         <a class="btn primary" href="${esc(gmaps)}" target="_blank" rel="noopener">Abrir la ruta en Google Maps${p.stops.length ? ' con las paradas' : ''}</a>
       </div>
-      ${cheapest.length ? `<details class="t-all"><summary>Las ${cheapest.length} más baratas de la ruta (${all.length} gasolineras con ${isGlp ? 'GLP' : 'gasolina'} a menos de ${isGlp ? GLP_CORRIDOR : GAS_CORRIDOR} km)</summary><ol class="t-stops">${cheapest.map(x => stopRow(x, 0)).join('')}</ol></details>` : ''}
-      <p class="src">${isGlp ? 'El plan no cuenta con la gasolina: si el GLP no llega, para antes. ' : ''}Donde pone «al menos», son los litros mínimos para llegar con unos ${Math.round(o.reserveKm)} km de margen; si prefieres llenar, mejor en la parada más barata. Consumo de «Mi coche» (${num(o.cons)} L/100 km): en autovía suele ser algo mayor. Ruta y tiempos de OSRM (OpenStreetMap), sin contar descansos ni atascos; el desvío de cada parada se mide por carretera en cuanto se puede. ${state.depart[1] || !round ? 'No' : 'A la ida no'} se proponen gasolineras que estarán cerradas cuando pases${round && !state.depart[1] ? ' (para la vuelta, indica cuándo vuelves)' : ''}. Los precios pueden cambiar antes de que llegues.</p>`;
+      ${cheapest.length ? `<details class="t-all"><summary>Las ${cheapest.length} más baratas de la ruta (${all.length} gasolineras con ${isGlp ? 'GLP' : 'gasolina'} a menos de ${isGlp ? GLP_CORRIDOR : GAS_CORRIDOR} km${state.hidden ? `; ${state.hidden === 1 ? 'no se muestra 1 que estará cerrada' : `no se muestran ${state.hidden} que estarán cerradas`} cuando pases` : ''})</summary><ol class="t-stops">${cheapest.map(x => stopRow(x, 0)).join('')}</ol></details>` : ''}
+      <p class="src">${isGlp ? 'El plan no cuenta con la gasolina: si el GLP no llega, para antes. ' : ''}Donde pone «al menos», son los litros mínimos para llegar con unos ${Math.round(o.reserveKm)} km de margen; si prefieres llenar, mejor en la parada más barata. Consumo de «Mi coche» (${num(o.cons)} L/100 km): en autovía suele ser algo mayor. Ruta y tiempos de OSRM (OpenStreetMap), sin contar descansos ni atascos; el desvío de cada parada se mide por carretera en cuanto se puede. ${state.depart[1] || !round ? 'No' : 'A la ida no'} se muestran las gasolineras que estarán cerradas cuando pases, ni las que cierran en la media hora siguiente${round && !state.depart[1] ? ' (para la vuelta, indica cuándo vuelves)' : ''}. Los precios pueden cambiar antes de que llegues.</p>`;
     loadDetours();
   }
 

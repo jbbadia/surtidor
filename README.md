@@ -61,7 +61,7 @@ Pestaña «Viaje». Con la salida y el destino (y, si se marca, **ida y vuelta**
 - Enseña el viaje en orden: salida, paradas numeradas (con «Llena el depósito» o «Echa al menos X L»), tramos con gasolina y llegada; en ida y vuelta, separado en «Ida» y «Vuelta». En ida y vuelta, una gasolinera junto al destino cuenta como una sola parada.
 - Dibuja la ruta y las paradas en el mapa con su número (una gasolinera usada a la ida y a la vuelta lleva los dos, «1·4») y abre la ruta con sus paradas en Google Maps.
 
-- Con la **hora de salida** (por defecto, ahora; en ida y vuelta se puede indicar también la de vuelta) calcula a qué hora pasas por cada gasolinera y **no propone las que estarán cerradas** o cierran en la media hora siguiente. Si sin ellas no se llega, las usa y avisa.
+- Con la **hora de salida** (por defecto, ahora; en ida y vuelta se puede indicar también la de vuelta) calcula a qué hora pasas por cada gasolinera y **las que estarán cerradas** (o cierran en la media hora siguiente) **no aparecen**: ni en el plan, ni en el mapa, ni en la lista de las más baratas. Se indica cuántas se han ocultado.
 - El **desvío de cada parada se mide por carretera** (dos rutas reales entre los mismos puntos, con y sin la gasolinera) y se enseña en km, minutos y euros. Si el rodeo real supera en más de 15 km al estimado (acceso solo por el otro sentido, por ejemplo), la gasolinera se descarta y se recalcula.
 - Las últimas 6 rutas se guardan en el dispositivo 30 días: repetir un viaje no llama al servidor, y si el servidor de rutas está caído se usa la guardada.
 
