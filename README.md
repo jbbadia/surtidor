@@ -98,6 +98,7 @@ Se puede exportar a CSV para Excel o Numbers.
 
 ## Qué hace
 
+- Si el mapa no se ve: se rehace solo al volver a la app (iOS tira el contexto gráfico en segundo plano), espera más con mala cobertura antes de cambiar al mapa de reserva, y en Ajustes → Mapa se ve qué mapa está en uso, se puede recargar o elegir el «mapa sencillo» (imágenes).
 - Mapa (OpenFreeMap + Leaflet) con el precio en cada pin, coloreado de barato a caro dentro de la zona. Los pines que se solaparían se ocultan dando prioridad a los más baratos o cercanos; al hacer zoom aparecen más.
 - Búsqueda por **mi ubicación**, **municipio** o **código postal** (sin salir del navegador) y, si no hay coincidencia, por dirección en OpenStreetMap.
 - Varios combustibles a la vez; uno es el «principal» (pines y orden), los demás se ven como precio secundario.

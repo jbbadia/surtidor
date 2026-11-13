@@ -135,50 +135,118 @@ document.addEventListener('click', e => {
 
 // ======================= Mapa =======================
 const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([center.lat, center.lon], 12);
-// Mapa base: OpenFreeMap (vectorial, gratis, sin clave y sin depender del Referer).
-// El servidor público de OpenStreetMap devuelve «Access blocked» (403) a los móviles que no envían
-// Referer (Safari con protección de privacidad, Brave, Firefox, bloqueadores…), así que solo se usa
-// como reserva si el dispositivo no tiene WebGL o OpenFreeMap no responde.
+// Mapa base: OpenFreeMap (vectorial, gratis, sin clave y sin depender del Referer), con mapas de
+// imágenes como reserva si el dispositivo no tiene WebGL, si OpenFreeMap no responde o si el usuario
+// elige el «mapa sencillo» en los ajustes.
 const ATTR_OSM = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 const dark = window.matchMedia('(prefers-color-scheme: dark)');
 const styleUrl = () => `https://tiles.openfreemap.org/styles/${dark.matches ? 'dark' : 'liberty'}`;
 function hasWebGL() {
-  try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); } catch { return false; }
+  try {
+    const c = document.createElement('canvas');
+    const gl = c.getContext('webgl2') || c.getContext('webgl');
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();      // el contexto de prueba no se queda ocupando sitio
+    return !!gl;
+  } catch { return false; }
 }
-let baseLayer = null;
-function useRasterFallback(reason) {
-  if (baseLayer && baseLayer.options?.className === 'osm-tiles') return;
-  if (baseLayer) map.removeLayer(baseLayer);
-  baseLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, className: 'osm-tiles', referrerPolicy: 'strict-origin-when-cross-origin', attribution: ATTR_OSM,
-  }).addTo(map);
+// Mapas de reserva, por orden. El de openstreetmap.org va el último: a algunos móviles que no envían
+// Referer les sirve una imagen de «Access blocked» en vez del mapa.
+const RASTERS = [
+  ['osm-de', 'https://tile.openstreetmap.de/{z}/{x}/{y}.png'],
+  ['osm', 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+];
+let baseLayer = null, baseKind = '', mapGen = 0, vectorFails = 0;
+/** Deja dicho qué mapa se está usando (se ve en Ajustes → Mapa) y enseña «Reintentar» si no hay ninguno. */
+function mapState(text, failed = false) {
+  document.documentElement.dataset.map = text;
+  $('map-diag').textContent = text;
+  $('map-fail').hidden = !failed;
+}
+function dropBase() {
+  mapGen++;
+  if (baseLayer) { try { map.removeLayer(baseLayer); } catch { /* ya no estaba */ } }
+  baseLayer = null; baseKind = '';
+}
+function useRasterFallback(reason, i = 0) {
+  if (baseKind === 'raster' && i === 0) return;
+  dropBase();
+  const gen = mapGen, [name, url] = RASTERS[i];
+  let ok = 0, bad = 0;
+  baseKind = 'raster';
+  baseLayer = L.tileLayer(url, { maxZoom: 19, className: 'osm-tiles', referrerPolicy: 'strict-origin-when-cross-origin', attribution: ATTR_OSM })
+    .on('tileload', () => { ok++; })
+    .on('tileerror', () => {
+      if (gen !== mapGen || ok || ++bad < 4) return;
+      if (RASTERS[i + 1]) useRasterFallback(reason, i + 1);
+      else mapState(`sin mapa (${reason})`, true);
+    })
+    .addTo(map);
   baseLayer.bringToBack();
-  document.documentElement.dataset.map = `osm (${reason})`;
+  mapState(`${name} (${reason})`);
+}
+function vectorAlive() {
+  try { const ctx = baseLayer.getMaplibreMap().painter.context.gl; return !!ctx && !ctx.isContextLost(); } catch { return false; }
 }
 // MapLibre pesa ~300 KB: se carga aparte para que la lista y los precios no lo esperen.
 async function initBaseMap() {
+  if (prefs.simpleMap) { dropBase(); return useRasterFallback('mapa sencillo'); }
   if (!hasWebGL()) return useRasterFallback('sin WebGL');
+  dropBase();
+  const gen = mapGen;
+  mapState('cargando…');
   try {
     const [{ maplibreGL }] = await Promise.all([
       import('@maplibre/maplibre-gl-leaflet'),
       import('maplibre-gl/dist/maplibre-gl.css'),
     ]);
-    if (baseLayer) return;      // ya se pasó a la reserva
+    if (gen !== mapGen) return;      // mientras tanto se eligió otro mapa
     baseLayer = maplibreGL({ style: styleUrl(), attribution: `<a href="https://openfreemap.org">OpenFreeMap</a> ${ATTR_OSM}` }).addTo(map);
+    baseKind = 'vector';
     const gl = baseLayer.getMaplibreMap();
     // El estilo de OpenFreeMap referencia alguna textura que no trae (p. ej. "wood-pattern"):
     // se rellena con un píxel transparente para no llenar la consola de avisos.
     gl.on('styleimagemissing', e => {
       if (!gl.hasImage(e.id)) gl.addImage(e.id, { width: 1, height: 1, data: new Uint8Array(4) });
     });
-    let loaded = false;
-    gl.once('load', () => { loaded = true; document.documentElement.dataset.map = 'openfreemap'; });
-    setTimeout(() => { if (!loaded) useRasterFallback('OpenFreeMap no respondió'); }, 12000);
-    dark.addEventListener?.('change', () => { if (baseLayer?.getMaplibreMap) baseLayer.getMaplibreMap().setStyle(styleUrl()); });
+    let styled = false, painted = false, lastErr = '';
+    const ok = () => { if (painted) return; painted = true; vectorFails = 0; if (gen === mapGen) mapState('openfreemap'); };
+    gl.once('styledata', () => { styled = true; });
+    gl.once('load', ok);
+    gl.on('sourcedata', e => { if (e.tile) ok(); });           // ya ha llegado algún trozo de mapa
+    gl.on('error', e => { lastErr = e?.error?.message || lastErr; });
+    // Con mala cobertura el mapa puede tardar: solo se cambia a la reserva pronto si OpenFreeMap ni
+    // siquiera ha contestado; si contestó pero no llega nada pintable, se espera más.
+    setTimeout(() => { if (gen === mapGen && !styled) useRasterFallback('OpenFreeMap no respondió'); }, 12000);
+    setTimeout(() => { if (gen === mapGen && !painted) useRasterFallback(`el mapa vectorial no cargó${lastErr ? `: ${lastErr}` : ''}`); }, 40000);
+    // iOS tira el contexto gráfico al dejar la app en segundo plano o si va justo de memoria.
+    gl.getCanvas().addEventListener('webglcontextlost', () => { setTimeout(() => { if (gen === mapGen) reviveMap(); }, 2000); });
   } catch {
-    useRasterFallback('error al cargar el mapa vectorial');
+    if (gen === mapGen) useRasterFallback('error al cargar el mapa vectorial');
   }
 }
+/** Al volver a la app: recoloca el mapa y, si el mapa vectorial se ha quedado sin contexto gráfico, lo rehace. */
+function reviveMap() {
+  map.invalidateSize({ animate: false });
+  if (baseKind !== 'vector') return;
+  if (vectorAlive()) { try { baseLayer.getMaplibreMap().triggerRepaint(); } catch { /* nada */ } return; }
+  if (++vectorFails <= 3) initBaseMap(); else useRasterFallback('el mapa vectorial se quedó en blanco');
+}
+dark.addEventListener?.('change', () => { if (baseKind === 'vector') { try { baseLayer.getMaplibreMap().setStyle(styleUrl()); } catch { /* nada */ } } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(reviveMap, 400); });
+window.addEventListener('pageshow', e => { if (e.persisted) setTimeout(reviveMap, 400); });
+$('map-retry').addEventListener('click', () => { vectorFails = 0; initBaseMap(); });
+$('map-reload').addEventListener('click', () => { vectorFails = 0; initBaseMap(); });
+$('simple-map').checked = !!prefs.simpleMap;
+$('simple-map').addEventListener('change', e => { prefs.simpleMap = e.target.checked; savePrefs(); vectorFails = 0; initBaseMap(); });
+// Si la web guardada es de una versión anterior, sus archivos ya no están en el servidor y el mapa
+// (que se carga aparte) no llegaría nunca: se recarga la página una vez para coger la versión nueva.
+window.addEventListener('vite:preloadError', () => {
+  try {
+    if (sessionStorage.getItem('surtidor:recargada')) return;
+    sessionStorage.setItem('surtidor:recargada', '1');
+  } catch { return; }
+  if (navigator.onLine) location.reload();
+});
 initBaseMap();
 const markers = L.layerGroup().addTo(map);
 const radiusCircle = L.circle([center.lat, center.lon], { radius: 1, color: '#1f56a8', weight: 1, opacity: .5, fillOpacity: .04, interactive: false }).addTo(map);

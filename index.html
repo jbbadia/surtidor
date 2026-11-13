@@ -156,6 +156,7 @@
     <div class="map-wrap">
       <div id="map" aria-label="Mapa de gasolineras"></div>
       <button type="button" id="search-here" class="search-here" hidden>Buscar en esta zona</button>
+      <div id="map-fail" class="map-fail" hidden><span>El mapa no ha cargado.</span><button type="button" class="btn" id="map-retry">Reintentar</button></div>
     </div>
     <section id="detail" class="detail" hidden aria-labelledby="d-name" role="dialog">
       <div class="detail-inner">
@@ -180,6 +181,10 @@
         <label class="field wide"><span>Gasolina que usas</span><select id="car-gasFuel"></select></label>
         <button type="button" id="car-reset" class="btn">Restablecer Dacia Sandero ECO-G 100 (2024)</button>
       </div>
+      <h2>Mapa</h2>
+      <p class="hint">Mapa en uso: <b id="map-diag">cargando…</b></p>
+      <label class="check"><input type="checkbox" id="simple-map"> <span>Usar el mapa sencillo (si el mapa no se ve o va lento)</span></label>
+      <button type="button" id="map-reload" class="btn">Recargar el mapa</button>
       <h2>Avisos de precio</h2>
       <p class="hint">Al abrir la web te avisamos de lo que han cambiado tus favoritas desde la última visita. Si además pones un precio objetivo, te avisamos cuando haya GLP igual o más barato en tus favoritas o cerca de ti.</p>
       <label class="field wide"><span>Avísame si el GLP baja de (€/L)</span><input id="glp-target" type="number" min="0.3" max="3" step="0.001" inputmode="decimal" placeholder="p. ej. 0.90"></label>
