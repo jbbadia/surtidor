@@ -27,6 +27,16 @@ export const rangeKm = (car, fuel) => (tankFor(car, fuel) / consFor(car, fuel)) 
 export const ROAD_FACTOR = 1.3;
 
 /**
+ * Lo que cuesta llegar a una gasolinera que está a `dist` km en línea recta (solo la ida), con el
+ * consumo medio del coche y al precio de esa gasolinera.
+ * @returns {{km: number, cost: number}} km aproximados por carretera y € de combustible
+ */
+export function driveCost(car, fuel, price, dist) {
+  const roadKm = Math.max(0, dist) * ROAD_FACTOR;
+  return { km: roadKm, cost: (roadKm * consFor(car, fuel) / 100) * price };
+}
+
+/**
  * Ahorro neto de llenar en una estación frente a otra de referencia (normalmente la más cercana),
  * descontando el combustible que se gasta en el desvío de ida y vuelta.
  * @returns {{gross: number, detour: number, net: number, extraKm: number}} en € y km

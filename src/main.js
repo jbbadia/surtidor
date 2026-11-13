@@ -3,7 +3,7 @@ import 'leaflet/dist/leaflet.css';
 import './style.css';
 import { FUELS, fuelById, catalog, loadFuel, provinceHistory, stationHistory, searchPlaces, geocode, parseFecha, provinceDailyMedians } from './api.js';
 import { openStatus } from './horario.js';
-import { SANDERO, GLP, tankFor, consFor, costPer100, rangeKm, netSaving, sanitizeCar } from './car.js';
+import { SANDERO, GLP, tankFor, consFor, costPer100, rangeKm, netSaving, driveCost, sanitizeCar } from './car.js';
 import { OFFERS, VERIFIED, activeOffers, offerMatches, isExpired, fmtDate } from './offers.js';
 import { lastPriceChange, daysAgoText, minutesAgoText, weekdayPattern } from './history.js';
 import { snapshot, priceChanges, belowTarget } from './alerts.js';
@@ -477,12 +477,20 @@ function rowHTML(x, tierOf, showDist = true) {
     <div class="ad">${esc(s.addr)} · ${esc(s.loc)}</div>
     <div class="meta">
       ${showDist && x.d != null ? `<span class="num">${fmtKm(x.d)}</span>` : ''}
+      ${showDist && x.d != null && x.p != null && !center.example ? goTag(x) : ''}
       <span class="${x.st.state}">${esc(x.st.label)}</span>
       ${fl ? `<span class="badge" title="${esc(fl.map(f => f.text).join(' '))}">Revisar precio</span>` : ''}
       ${saveTag(x)}
       ${others ? `<span class="others">${others}</span>` : ''}
     </div>
   </li>`;
+}
+
+/** Lo que cuesta llegar hasta la gasolinera con el consumo medio de tu coche. */
+function goTag(x) {
+  const g = driveCost(car(), prefs.primary, x.eff, x.d);
+  if (g.km < 0.3) return '';
+  return `<span class="go" title="Unos ${fmtKm(g.km)} por carretera a ${String(consFor(car(), prefs.primary)).replace('.', ',')} L/100 km. Ida y vuelta: ${euros(2 * g.cost)}">Ir cuesta ${euros(g.cost)}</span>`;
 }
 
 function saveTag(x) {
@@ -678,6 +686,7 @@ function renderDetail(id, loadHistory) {
       <p>${esc(s.addr)}<br>${esc(s.cp)} ${esc(s.loc)} (${esc(s.prov)})${dist != null ? ` · <span class="num">${fmtKm(dist)}</span>` : ''}</p>
     </div>
     <div class="totem" aria-label="Precios">${rows}</div>
+    ${goLine(s, dist, pPrim)}
     ${pPrim ? `<p class="d-change" id="d-change">Último cambio de precio (${esc(fuelById(prefs.primary).label)}): consultando el histórico…</p>` : ''}
     ${fl.map(f => `<div class="warn"><strong>Revisa este precio</strong>${esc(f.text)}</div>`).join('')}
     ${activeOffers().filter(o => offerMatches(o, s.name) && !hasOffer(o.id)).map(o => `<div class="d-offer"><p class="eyebrow">Oferta en esta gasolinera</p>${offerCard(o, true)}</div>`).join('')}
@@ -708,6 +717,15 @@ function renderDetail(id, loadHistory) {
   });
   if (pPrim && loadHistory) loadHist(s, prefs.primary, pPrim);
   else if (pPrim && lastHist?.id === id && lastHist.fuel === prefs.primary) { drawHist(lastHist.series); drawChange(lastHist.series); }
+}
+
+/** Ficha: lo que cuesta ir hasta la gasolinera desde donde estás buscando. */
+function goLine(s, dist, p) {
+  if (dist == null || p == null) return '';
+  const c = car(), fuel = prefs.primary;
+  const g = driveCost(c, fuel, effective(s, p), dist);
+  if (g.km < 0.3) return '';
+  return `<p class="d-change" id="d-go">Ir hasta aquí: unos ${fmtKm(g.km)} por carretera, <b>${euros(g.cost)}</b> de ${fuel === GLP ? 'GLP' : 'gasolina'} con tu consumo medio (${String(consFor(c, fuel)).replace('.', ',')} L/100 km). Ida y vuelta: ${euros(2 * g.cost)}.</p>`;
 }
 
 /** Lo que te cuesta tu coche en esta gasolinera: llenar cada depósito, coste por 100 km y autonomía. */

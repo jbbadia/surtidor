@@ -1,7 +1,7 @@
 // Pestaña «Viaje»: formulario, cálculo de la ruta y dibujo de las paradas en el mapa.
 
 import { fetchRoute } from './route.js';
-import { prepareRoute, alongRoute, thin, cheapPlan, fastPlan, withRank } from './trip.js';
+import { prepareRoute, alongRoute, thin, cheapPlan, fastPlan, withRank, detourKm } from './trip.js';
 import { GLP, tankFor, consFor } from './car.js';
 import { median } from './history.js';
 import { catalog, fuelById, searchPlaces, geocode } from './api.js';
@@ -14,6 +14,7 @@ const NEAR_KM = 0.5;                           // «junto a la ruta»
 // de estos km entre una pasada y la otra, cuentan como una sola parada posible.
 const TURN_KM = 30;
 const uniq = list => [...new Map(list.map(s => [s.sid, s])).values()];
+const ARRIVE = { 0.25: '1/4', 0.5: 'la mitad', 0.75: '3/4', 1: 'el depósito lleno' };
 const LEVELS = { 1: 'lleno', 0.75: 'a 3/4', 0.5: 'a la mitad', 0.25: 'a 1/4', 0.1: 'casi vacío' };
 
 export function initTrip(ctx) {
@@ -92,6 +93,7 @@ export function initTrip(ctx) {
     if (prefs.trip.from) setPlace('from', prefs.trip.from);
     if (prefs.trip.to) setPlace('to', prefs.trip.to);
     if (prefs.trip.level) $('t-level').value = String(prefs.trip.level);
+    if (prefs.trip.arrive) $('t-arrive').value = String(prefs.trip.arrive);
     $('t-round').checked = !!prefs.trip.round;
   }
 
@@ -121,6 +123,7 @@ export function initTrip(ctx) {
       const fuel = $('t-fuel').value === 'gas' ? c.gasFuel : GLP;
       const level = +$('t-level').value || 1;
       const round = $('t-round').checked;
+      const arrive = +$('t-arrive').value || 0;
       const [r1, r2] = await Promise.all([fetchRoute(from, to), round ? fetchRoute(to, from) : null,
         ctx.ensureFuel(GLP).catch(() => null), ctx.ensureFuel(c.gasFuel).catch(() => null)]);
       const route1 = prepareRoute(r1.coords), route2 = r2 && prepareRoute(r2.coords);
@@ -144,16 +147,21 @@ export function initTrip(ctx) {
         totalKm, rangeKm, startKm: level * rangeKm, cons,
         reserveKm: Math.min(isGlp ? 30 : 50, rangeKm * 0.15),
         gapCostPerKm: isGlp && medGas ? (c.gasCons / 100) * medGas : 0,
-        // Bifuel: mejor hacer unos pocos km con gasolina que parar a echar un par de litros de GLP.
-        slackKm: isGlp ? Math.min(80, rangeKm * 0.2) : 0,
+        // Si se para, que sea para echar algo: al menos 5 L (o el 15 % del depósito).
+        minBuyKm: (Math.max(5, tankFor(c, fuel) * 0.15) / cons) * 100,
       };
+      // Con cuánto se quiere llegar: esa parte del depósito, de la que el margen ya forma parte.
+      o.arriveKm = arrive ? Math.max(0, arrive * rangeKm - o.reserveKm) : 0;
+      const fast = fastPlan(cands, o);
+      let cheap = cheapPlan(cands, o);
+      if (fast.gapKm <= cheap.gapKm && fast.net < cheap.net && fast.stops.length <= cheap.stops.length) cheap = fast;
       state = {
         from, to, round, coords: r2 ? [r1.coords, r2.coords] : [r1.coords], km: totalKm, seconds: r1.seconds + (r2 ? r2.seconds : 0),
         legs: [{ km: route1.km, seconds: r1.seconds }, ...(r2 ? [{ km: route2.km, seconds: r2.seconds }] : [])],
-        fuel, isGlp, level, cands, o, medGlp, medGas,
-        plans: { cheap: cheapPlan(cands, o), fast: fastPlan(cands, o) },
+        fuel, isGlp, level, arrive, cands, o, medGlp, medGas,
+        plans: { cheap, fast },
       };
-      prefs.trip = { from, to, level, round, fuel: isGlp ? 'glp' : 'gas', mode };
+      prefs.trip = { from, to, level, arrive, round, fuel: isGlp ? 'glp' : 'gas', mode };
       savePrefs();
       status('');
       render();
@@ -173,24 +181,24 @@ export function initTrip(ctx) {
     const { o, isGlp, level, cands } = state;
     const name = isGlp ? 'GLP' : 'gasolina';
     const petrol = isGlp && p.gapKm > 0.5
-      ? `unos <b>${num(p.gapKm, 0)} km irás con gasolina</b>${o.gapCostPerKm ? ` (≈ ${euros(p.gapKm * o.gapCostPerKm)})` : ''}` : '';
+      ? `hay <b>${num(p.gapKm, 0)} km sin ninguna gasolinera con GLP a tu alcance</b>: ahí el coche pasará solo a gasolina${o.gapCostPerKm ? ` (≈ ${euros(p.gapKm * o.gapCostPerKm)})` : ''}` : '';
     let html;
     if (!p.stops.length && !p.gapKm) {
-      html = `<b>No necesitas repostar.</b> Con el depósito ${LEVELS[level] || 'así'} tienes para unos ${Math.round(o.startKm)} km de ${name} y el viaje son ${Math.round(o.totalKm)} km${state.round ? ' entre ida y vuelta' : ''}. ${mode === 'cheap'
+      html = `<b>No necesitas repostar.</b> Con el depósito ${LEVELS[level] || 'así'} tienes para unos ${Math.round(o.startKm)} km de ${name} y el viaje son ${Math.round(o.totalKm)} km${state.round ? ' entre ida y vuelta' : ''}${state.arrive ? `: llegas con ${ARRIVE[state.arrive] || 'lo que pedías'} o más` : ''}. ${mode === 'cheap'
         ? 'Si aun así quieres llenar por el camino, esta es la más barata de la ruta contando el desvío:'
         : 'Si aun así quieres llenar por el camino, esta es la más barata de las que están junto a la carretera:'}`;
     } else if (!p.stops.length && !cands.length) {
       html = `<b>No hay gasolineras con ${name} junto a esta ruta.</b>`;
     } else if (!p.stops.length) {
       html = isGlp
-        ? `<b>Sin paradas.</b> El GLP no te llega para todo el viaje y ${petrol}: parar a repostar por tan poco no compensa.${other.stops.length ? ` Si prefieres no gastar gasolina, mira «${mode === 'cheap' ? 'Más rápida' : 'Más barata'}».` : ''}`
+        ? `<b>Sin paradas posibles.</b> En esta ruta ${petrol}. Sal con el depósito más lleno si puedes.`
         : '<b>No hay gasolineras a tiro para este viaje.</b>';
     } else {
       const line = t => `<span class="t-line">${t}</span>`;
       html = `<span class="t-head"><b>${stopsText(p.stops.length)}</b> · pagas <b>${euros(p.paid)}</b></span>`
         + line(`${num(p.litres)} L de ${name} a ${priceText(p.paid / p.litres)} €/L de media${p.detourKm >= 0.5 ? ` · unos ${num(p.detourKm, 0)} km de desvío en total` : ' · casi sin desvío'}`);
-      if (petrol) html += line(`Además, ${petrol}: parar por tan poco no compensa.`);
-      const diff = other.cost - p.cost;
+      if (petrol) html += line(`Ojo: ${petrol}.`);
+      const diff = other.net - p.net;      // contando lo que sobra en el depósito al llegar
       if (mode === 'cheap' && diff > 0.05) html += line(`Ahorras <b class="good">${euros(diff)}</b> frente a la ruta más rápida.`);
       else if (mode === 'fast' && diff < -0.05) {
         const less = other.stops.length - p.stops.length;
@@ -223,7 +231,7 @@ export function initTrip(ctx) {
         <div class="nm">${esc(s.name)}</div>
         <div class="ad">Km ${Math.round(x.legAt)} de ${where} · ${esc(s.loc)} (${esc(s.prov)})</div>
         ${sub}
-        <div class="ad">${x.off < 0.3 ? 'Junto a la ruta' : `A ${num(x.off)} km de la ruta`}${s.horario ? ` · ${esc(s.horario)}` : ''}</div>
+        <div class="ad">${x.off < 0.3 ? 'Junto a la ruta' : `A ${num(x.off)} km de la ruta · desviarte cuesta unos ${euros(detourKm(x) * state.o.cons / 100 * x.price)}`}${s.horario ? ` · ${esc(s.horario)}` : ''}</div>
       </div>
       <div class="price">${ctx.priceHTML(x.price)}<span class="u">€/L</span></div>
     </li>`;
@@ -241,7 +249,7 @@ export function initTrip(ctx) {
       return legOf(a) === legOf(b) ? `Del km ${kmIn(a)} al ${kmIn(b)}${legName(a)}` : `Del km ${kmIn(a)}${legName(a)} al ${kmIn(b)}${legName(b)}`;
     };
     const gapRow = g => `<li class="t-gap"><span class="t-n g" aria-hidden="true">!</span><div class="t-main">${isGlp
-      ? `<div class="t-do"><b>Unos ${num(g.km, 0)} km con gasolina</b>${o.gapCostPerKm ? ` · ≈ ${euros(g.km * o.gapCostPerKm)}` : ''}</div><div class="ad">${span(g)} ${g.km <= o.reserveKm ? 'el GLP llega justo: si se acaba, el coche pasa solo a gasolina.' : 'no hay GLP a tiro: el coche pasa solo a gasolina.'}</div>`
+      ? `<div class="t-do"><b>Unos ${num(g.km, 0)} km con gasolina</b>${o.gapCostPerKm ? ` · ≈ ${euros(g.km * o.gapCostPerKm)}` : ''}</div><div class="ad">${span(g)} no hay ninguna gasolinera con GLP a tu alcance: el coche pasa solo a gasolina.</div>`
       : `<div class="t-do"><b>${num(g.km, 0)} km sin cubrir</b></div><div class="ad">${span(g)} no hay gasolineras a tiro. Sal con más combustible.</div>`}</div></li>`;
     const events = [
       ...p.stops.map((x, i) => ({ at: x.at, leg: x.leg, html: stopRow(x, i + 1) })),
@@ -251,12 +259,21 @@ export function initTrip(ctx) {
     const wp = (cls, title, sub) => `<li class="t-wp"><span class="t-end ${cls}" aria-hidden="true"></span><div class="t-main"><div class="t-do"><b>${title}</b></div>${sub ? `<div class="ad">${sub}</div>` : ''}</div></li>`;
     const head = (name, leg) => `<li class="t-leg"><b>${name}</b> · ${num(leg.km, 0)} km · ${hm(leg.seconds)}</li>`;
     const usable = Math.max(0, Math.round(Math.min(o.startKm, o.rangeKm) - o.reserveKm));
+    // Con cuánto se llega: lo que sobra según el plan más el margen, sobre el depósito entero.
+    const arrival = pl => {
+      if (pl.leftKm === undefined || pl.gapKm > 0.5) return '';
+      const km = pl.leftKm + o.reserveKm, part = km / o.rangeKm;
+      const how = part >= 0.93 ? 'lleno' : part >= 0.7 ? 'a unos 3/4' : part >= 0.45 ? 'a la mitad más o menos' : part >= 0.2 ? 'a 1/4 más o menos' : 'casi vacío';
+      const txt = `Llegas con el depósito ${how}: ${isGlp ? 'GLP' : 'gasolina'} para unos ${Math.round(km / 5) * 5} km`;
+      const miss = state.arrive && pl.leftKm < o.arriveKm - 10;
+      return miss ? `${txt}. No hay gasolineras más cerca del final para llegar con ${ARRIVE[state.arrive] || 'más'}.` : txt;
+    };
     const start = wp('a', `Salida · ${short(from.label)}`, `Depósito ${LEVELS[level] || 'así'}: ${isGlp ? 'GLP' : 'gasolina'} para unos ${usable} km, más ${Math.round(o.reserveKm)} de margen`);
     return legs.map((leg, i) => [
       round ? head(i ? 'Vuelta' : 'Ida', leg) : '',
       i ? '' : start,
       ...events.filter(e => (e.leg || 0) === i).map(e => e.html),
-      wp(round && i ? 'a' : 'b', `Llegada · ${short((i ? from : to).label)}`, round && !i ? 'Aquí das la vuelta' : ''),
+      wp(round && i ? 'a' : 'b', `Llegada · ${short((i ? from : to).label)}`, round && !i ? 'Aquí das la vuelta' : arrival(p)),
     ].join('')).join('');
   }
 
@@ -308,7 +325,7 @@ export function initTrip(ctx) {
         <a class="btn primary" href="${esc(gmaps)}" target="_blank" rel="noopener">Abrir la ruta en Google Maps${p.stops.length ? ' con las paradas' : ''}</a>
       </div>
       ${cheapest.length ? `<details class="t-all"><summary>Las ${cheapest.length} más baratas de la ruta (${all.length} gasolineras con ${isGlp ? 'GLP' : 'gasolina'} a menos de ${isGlp ? GLP_CORRIDOR : GAS_CORRIDOR} km)</summary><ol class="t-stops">${cheapest.map(x => stopRow(x, 0)).join('')}</ol></details>` : ''}
-      <p class="src">Donde pone «al menos», son los litros mínimos para llegar con unos ${Math.round(o.reserveKm)} km de margen; si prefieres llenar, mejor en la parada más barata. Consumo de «Mi coche» (${num(o.cons)} L/100 km): en autovía suele ser algo mayor. Ruta y tiempos de OSRM (OpenStreetMap); la distancia a la ruta es en línea recta. Los precios pueden cambiar antes de que llegues.</p>`;
+      <p class="src">${isGlp ? 'El plan no cuenta con la gasolina: si el GLP no llega, para antes. ' : ''}Donde pone «al menos», son los litros mínimos para llegar con unos ${Math.round(o.reserveKm)} km de margen; si prefieres llenar, mejor en la parada más barata. Consumo de «Mi coche» (${num(o.cons)} L/100 km): en autovía suele ser algo mayor. Ruta y tiempos de OSRM (OpenStreetMap); la distancia a la ruta es en línea recta. Los precios pueden cambiar antes de que llegues.</p>`;
   }
 
   $('t-result').addEventListener('click', e => {

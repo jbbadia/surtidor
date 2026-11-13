@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SANDERO, GLP, costPer100, rangeKm, netSaving, tankFor, sanitizeCar } from '../src/car.js';
+import { SANDERO, GLP, costPer100, rangeKm, netSaving, tankFor, sanitizeCar, driveCost } from '../src/car.js';
 
 const close = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
 
@@ -40,4 +40,13 @@ test('la propia estación de referencia no ahorra nada', () => {
 test('preferencias corruptas vuelven a los datos del Sandero', () => {
   assert.deepEqual(sanitizeCar({ glpL: -3, glpCons: 'abc', gasFuel: '4' }), { ...SANDERO });
   assert.equal(sanitizeCar({ glpCons: 6.2 }).glpCons, 6.2);
+});
+
+test('coste de ir a una gasolinera con el consumo medio', () => {
+  // 10 km en línea recta ≈ 13 km por carretera; a 7,4 L/100 km y 0,90 €/L son 0,87 €.
+  const g = driveCost(SANDERO, GLP, 0.9, 10);
+  assert.ok(Math.abs(g.km - 13) < 1e-9);
+  assert.ok(Math.abs(g.cost - 13 * 0.074 * 0.9) < 1e-9);
+  assert.ok(driveCost(SANDERO, '1', 1.5, 10).cost > 0);
+  assert.equal(driveCost(SANDERO, GLP, 0.9, 0).cost, 0);
 });

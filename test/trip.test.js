@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareRoute, alongRoute, fillPlan, cheapPlan, fastPlan, thin, withRank } from '../src/trip.js';
+import { prepareRoute, alongRoute, fillPlan, cheapPlan, fastPlan, optimalPlan, thin, withRank } from '../src/trip.js';
 
 // Ruta recta hacia el este por el paralelo 40: 1 grado de longitud ≈ 85,2 km.
 const route = prepareRoute(Array.from({ length: 401 }, (_, i) => [40, -4 + i * 0.01]));
@@ -88,23 +88,99 @@ test('el desvío se paga en litros', () => {
 test('se desvía si compensa, y no por un céntimo', () => {
   const o = { ...base, totalKm: 600 };
   const rank = sts => withRank(sts, 7.4, 20);
-  // 10 km de la ruta (26 km de rodeo ≈ 1,9 L): un céntimo menos no lo paga; 15 céntimos sí.
+  // 10 km de la ruta (26 km de rodeo): un céntimo menos no lo paga, y 15 céntimos tampoco (rodeo exagerado).
+  // A 4 km de la ruta y 25 céntimos más barata, sí.
   assert.deepEqual(cheapPlan(rank([st('lejos', 300, 0.89, 10), st('pegada', 320, 0.90, 0.1)]), o).stops.map(s => s.id), ['pegada']);
-  assert.deepEqual(cheapPlan(rank([st('lejos', 300, 0.75, 10), st('pegada', 320, 0.90, 0.1)]), o).stops.map(s => s.id), ['lejos']);
+  assert.deepEqual(cheapPlan(rank([st('lejos', 300, 0.75, 10), st('pegada', 320, 0.90, 0.1)]), o).stops.map(s => s.id), ['pegada']);
+  assert.deepEqual(cheapPlan(rank([st('lejos', 300, 0.65, 4), st('pegada', 320, 0.90, 0.1)]), o).stops.map(s => s.id), ['lejos']);
 });
 
-test('bifuel: no para por un par de litros si puede hacer esos km con gasolina', () => {
-  // Autonomía útil 400 km y la gasolinera barata está en el km 420: faltan 20 km.
-  // «a» (km 20) solo serviría para rellenar 1,5 L recién salido.
-  const sts = [st('a', 20, 0.9), st('b', 420, 0.8)];
-  const o = { ...base, totalKm: 500, gapCostPerKm: 0.08 };
-  assert.deepEqual(cheapPlan(sts, o).stops.map(s => s.id), ['a', 'b'], 'sin margen de gasolina, para dos veces');
-  const p = cheapPlan(sts, { ...o, slackKm: 60 });
-  assert.deepEqual(p.stops.map(s => s.id), ['b']);
-  assert.ok(Math.abs(p.gapKm - 20) < 0.01, String(p.gapKm));
-  // Pero no cambia una parada de verdad por muchos km de gasolina.
-  const far = cheapPlan([st('a', 300, 0.9)], { ...base, totalKm: 700, gapCostPerKm: 0.08, slackKm: 60 });
-  assert.deepEqual(far.stops.map(s => s.id), ['a']);
+test('nunca cuenta con quedarse sin combustible: para antes, aunque sea más cara', () => {
+  // Autonomía útil 400 km y la barata está en el km 420: faltan 20 km. «c» (km 250) es cara.
+  const o = { ...base, totalKm: 700, gapCostPerKm: 0.08, minBuyKm: 70 };
+  const p = cheapPlan([st('c', 250, 1.1), st('b', 420, 0.8)], o);
+  assert.deepEqual(p.stops.map(s => s.id), ['c', 'b']);
+  assert.equal(p.gapKm, 0);
+});
+
+test('no manda rellenar un par de litros recién salido si puede parar más adelante', () => {
+  // «a» (km 20) es barata, pero con el depósito lleno solo cabrían 1,5 L.
+  const o = { ...base, totalKm: 700, minBuyKm: 70 };
+  const p = cheapPlan([st('a', 20, 0.9), st('c', 250, 1.1), st('b', 420, 0.8)], o);
+  assert.deepEqual(p.stops.map(s => s.id), ['c', 'b']);
+  assert.ok(p.stops[0].litres >= 70 * 0.074 - 0.01, 'si para, echa al menos el mínimo');
+  assert.equal(p.gapKm, 0);
+  // Si «a» es la única forma de llegar, se usa antes que quedarse tirado.
+  const only = cheapPlan([st('a', 20, 0.9), st('b', 420, 0.8)], o);
+  assert.deepEqual(only.stops.map(s => s.id), ['a', 'b']);
+  assert.equal(only.gapKm, 0);
+});
+
+test('el plan barato no gasta más que comprar lo justo en cada gasolinera', () => {
+  const sts = [st('a', 300, 1.2), st('b', 500, 0.8), st('c', 800, 1.0)];
+  const p = cheapPlan(sts, base);
+  assert.equal(p.gapKm, 0);
+  assert.ok(p.cost <= fillPlan(sts, base).cost + 2.01, `${p.cost} vs ${fillPlan(sts, base).cost}`);
+  assert.ok(p.stops.length <= 3);
+});
+
+test('el reparto óptimo coincide con «comprar lo justo» en 200 viajes al azar', () => {
+  let seed = 7;
+  const rnd = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+  for (let t = 0; t < 200; t++) {
+    const totalKm = 300 + Math.floor(rnd() * 1200);
+    const used = new Set();
+    const sts = [];
+    for (let i = 0, n = 3 + Math.floor(rnd() * 25); i < n; i++) {
+      const at = 1 + Math.floor(rnd() * (totalKm - 2));
+      if (used.has(at)) continue;
+      used.add(at);
+      sts.push(st('s' + i, at, 0.7 + Math.round(rnd() * 60) / 100));
+    }
+    sts.sort((a, b) => a.at - b.at);
+    const o = { ...base, totalKm, startKm: 60 + Math.floor(rnd() * 370), gapCostPerKm: 0.1 };
+    const ref = fillPlan(sts, o), p = optimalPlan(sts, o, 0);
+    assert.ok(Math.abs(p.gapKm - ref.gapKm) < 0.01, `viaje ${t}: tramos sin cubrir ${p.gapKm} vs ${ref.gapKm}`);
+    assert.ok(Math.abs(p.paid - ref.paid) < 0.01, `viaje ${t}: ${p.paid} vs ${ref.paid}`);
+  }
+});
+
+test('no para dos veces casi seguidas si evitarlo cuesta poco', () => {
+  // Faltan 10 km para la barata (km 410). «n» (km 395) está pegada a ella; «c» (km 250), no.
+  const o = { ...base, totalKm: 800, minBuyKm: 70 };
+  const p = cheapPlan([st('c', 250, 1.0), st('n', 395, 0.95), st('b', 410, 0.8)], o);
+  assert.equal(p.gapKm, 0);
+  for (let i = 1; i < p.stops.length; i++) assert.ok(p.stops[i].at - p.stops[i - 1].at >= 40, p.stops.map(s => s.id).join(','));
+});
+
+test('lo que sobra al llegar se cuenta', () => {
+  // Faltan 10 km y el mínimo son 70: sobran 60 km en el depósito.
+  const p = cheapPlan([st('a', 300, 0.9)], { ...base, totalKm: 410, minBuyKm: 70 });
+  assert.deepEqual(p.stops.map(s => s.id), ['a']);
+  assert.equal(p.leftKm, 60);
+  assert.ok(p.net < p.cost);
+});
+
+test('llega al destino con el depósito que se pide', () => {
+  // 300 km con autonomía útil de 400: sin pedir nada no para; pidiendo llegar con 200 km, sí.
+  const sts = [st('a', 100, 0.9), st('b', 250, 1.0)];
+  const o = { ...base, totalKm: 300, minBuyKm: 70 };
+  assert.equal(cheapPlan(sts, o).stops.length, 0);
+  for (const plan of [cheapPlan, fastPlan]) {
+    const p = plan(sts, { ...o, arriveKm: 200 });
+    assert.ok(p.stops.length >= 1, plan.name);
+    assert.ok(p.leftKm >= 200, `${plan.name}: llega con ${p.leftKm}`);
+    assert.equal(p.gapKm, 0);
+  }
+  // Si no hay gasolinera para conseguirlo, llega con lo más que se pueda.
+  const p = cheapPlan(sts, { ...o, arriveKm: 400 });
+  assert.equal(p.leftKm, 350, 'llena en «b», a 50 km del destino');
+});
+
+test('tramo imposible: el plan barato lo avisa y aprovecha lo que hay', () => {
+  const p = cheapPlan([st('a', 100, 0.9)], { ...base, totalKm: 700, gapCostPerKm: 0.1 });
+  assert.deepEqual(p.stops.map(s => s.id), ['a']);
+  assert.ok(Math.abs(p.gapKm - 200) < 1.01, String(p.gapKm));
 });
 
 test('cada parada dice si hay que llenar o basta con una parte', () => {
