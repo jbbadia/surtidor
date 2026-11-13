@@ -984,13 +984,13 @@ function installSteps() {
     return ol([
       `Pulsa el botón <b>Compartir</b> ${ICON_SHARE} ${where}.`,
       `Baja en el menú y toca <b>«Añadir a pantalla de inicio»</b> ${ICON_ADD}. Si no aparece, toca «Editar acciones» al final de la lista y actívalo.`,
-      'Pulsa <b>«Añadir»</b> arriba a la derecha. Aparecerá el icono de Surtidor junto a tus apps.',
+      'Pulsa <b>«Añadir»</b> arriba a la derecha. Aparecerá el icono de Repostaje Rocío junto a tus apps.',
     ]) + '<p class="hint">Se abrirá a pantalla completa, como una app, y conservará tu coche, tus favoritas y tus ofertas.</p>';
   }
   return ol([
     `Abre el menú del navegador ${ICON_DOTS} (arriba a la derecha).`,
     'Toca <b>«Instalar aplicación»</b> o <b>«Añadir a pantalla de inicio»</b>.',
-    'Confirma. Aparecerá el icono de Surtidor junto a tus apps.',
+    'Confirma. Aparecerá el icono de Repostaje Rocío junto a tus apps.',
   ]);
 }
 function renderInstall() {

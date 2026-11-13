@@ -1,4 +1,6 @@
-# Surtidor
+# Repostaje Rocío
+
+> Antes se llamaba «Surtidor». La carpeta, el repositorio y la dirección web conservan ese nombre para no romper los enlaces ni los datos guardados en cada navegador.
 
 Comparador de precios de **GLP y gasolina** (95 E5, 95 E10, 95 Premium, 98 E5, 98 E10) en España, con los datos oficiales y gratuitos del Ministerio (API REST «Precios de Carburantes», Geoportal de Gasolineras). Sin anuncios, sin cuenta y sin rastreo.
 

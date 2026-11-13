@@ -1,4 +1,4 @@
-// Service worker de Surtidor: guarda la propia web para poder abrirla sin conexión.
+// Service worker de Repostaje Rocío: guarda la propia web para poder abrirla sin conexión.
 // No toca los precios (van en IndexedDB), ni el mapa, ni las rutas: solo HTML, código, iconos y fuentes.
 
 const CACHE = 'surtidor-shell-v1';
