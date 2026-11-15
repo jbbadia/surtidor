@@ -199,6 +199,16 @@
         <label class="field"><span>Tipo</span><select id="disc-type"><option value="cent">cént/L</option><option value="pct">%</option></select></label>
         <button type="button" id="disc-add" class="btn">Añadir</button>
       </fieldset>
+      <h2>Copia de seguridad</h2>
+      <p class="hint">Tu coche y sus consumos, tus favoritas, descuentos, ajustes y el diario se guardan solo en este dispositivo. Guarda una copia en un archivo para no perderlos, o para llevarlos a otro móvil u ordenador.</p>
+      <p class="hint" id="bk-last"></p>
+      <div class="bk-actions">
+        <button type="button" id="bk-save" class="btn">Guardar copia</button>
+        <button type="button" id="bk-load" class="btn">Restaurar una copia</button>
+        <input type="file" id="bk-file" accept="application/json,.json" hidden>
+      </div>
+      <p class="hint" id="bk-status" aria-live="polite" hidden></p>
+      <button type="button" id="bk-apply" class="btn primary" hidden>Restaurar y sustituir lo de este dispositivo</button>
       <div class="settings-actions"><button class="btn primary" value="ok">Hecho</button></div>
     </form>
   </dialog>

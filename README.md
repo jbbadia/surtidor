@@ -67,6 +67,10 @@ Pestaña «Viaje». Con la salida y el destino (y, si se marca, **ida y vuelta**
 
 Donde pone «al menos», los litros son los mínimos para llegar con unos 30 km de margen. Para elegir las gasolineras candidatas se usa la distancia en línea recta a la ruta (GLP: hasta 12 km; gasolina: hasta 6 km).
 
+## Copia de seguridad
+
+Ajustes → «Copia de seguridad» (`src/backup.js`). Guarda en un archivo el coche y sus consumos, las favoritas, los descuentos, los ajustes y el diario, y lo restaura en este u otro dispositivo. En el móvil abre el menú de compartir («Guardar en Archivos»); en el ordenador lo descarga. Al restaurar se enseña lo que trae la copia antes de sustituir nada. No hay cuentas ni sincronización: es un archivo que se lleva a mano.
+
 ## Diario de repostajes
 
 Pestaña «Diario» (o «Apuntar repostaje aquí» en la ficha de una gasolinera). Se guarda solo en el dispositivo y calcula (`src/log.js`):
@@ -117,6 +121,7 @@ Se puede exportar a CSV para Excel o Numbers.
 - `src/alerts.js`, `src/history.js`: avisos de precio, último cambio y mejor día de la semana.
 - `public/sw.js`: service worker para abrir la web sin conexión.
 - `src/offers.js`: catálogo de ofertas con caducidad y a qué marcas se aplica.
+- `src/backup.js`: copia de seguridad en un archivo (guardar, validar y restaurar).
 - `src/car.js`: perfil del coche y cálculos (coste por 100 km, autonomía, ahorro neto con desvío).
 - `src/horario.js`: interpreta horarios como `L-V: 07:00-14:00 y 16:00-21:00; S: 08:00-14:00` (zona horaria de Canarias incluida).
 - `src/main.js`: interfaz (mapa, lista, filtros, ficha, ajustes).

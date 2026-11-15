@@ -4,6 +4,7 @@ import './style.css';
 import { FUELS, fuelById, catalog, loadFuel, provinceHistory, stationHistory, searchPlaces, geocode, parseFecha, provinceDailyMedians } from './api.js';
 import { openStatus } from './horario.js';
 import { SANDERO, GLP, tankFor, consFor, costPer100, rangeKm, netSaving, driveCost, sanitizeCar } from './car.js';
+import { makeBackup, parseBackup, describeBackup } from './backup.js';
 import { OFFERS, VERIFIED, activeOffers, offerMatches, isExpired, fmtDate } from './offers.js';
 import { lastPriceChange, daysAgoText, minutesAgoText, weekdayPattern } from './history.js';
 import { snapshot, priceChanges, belowTarget } from './alerts.js';
@@ -973,7 +974,73 @@ function renderDiscounts() {
 const CAR_FIELDS = ['name', 'glpL', 'glpCons', 'gasL', 'gasCons', 'gasFuel'];
 $('car-gasFuel').innerHTML = FUELS.filter(f => f.id !== GLP).map(f => `<option value="${f.id}">${esc(f.long)}</option>`).join('');
 function fillCarForm(c) { for (const k of CAR_FIELDS) $(`car-${k}`).value = c[k]; }
-function openSettings() { renderDiscounts(); fillCarForm(car()); $('glp-target').value = prefs.glpTarget ?? ''; dlg.showModal(); }
+function openSettings() { renderDiscounts(); fillCarForm(car()); $('glp-target').value = prefs.glpTarget ?? ''; renderBackup(); dlg.showModal(); }
+
+// ----- Copia de seguridad: todo lo personal en un archivo -----
+const LOG_KEY = 'surtidor:v1:repostajes';
+const diaryEntries = () => { try { return JSON.parse(localStorage.getItem(LOG_KEY) || '[]') || []; } catch { return []; } };
+let pendingBackup = null;
+function backupStatus(text, err = false) {
+  const el = $('bk-status');
+  el.textContent = text; el.hidden = !text; el.classList.toggle('err', err);
+}
+function renderBackup() {
+  const days = prefs.lastBackup ? Math.floor((Date.now() - prefs.lastBackup) / 864e5) : null;
+  $('bk-last').textContent = days == null ? 'Aún no has guardado ninguna copia desde este dispositivo.'
+    : `Última copia guardada desde aquí: ${days === 0 ? 'hoy' : days === 1 ? 'ayer' : `hace ${days} días`}.`;
+  pendingBackup = null; $('bk-apply').hidden = true; backupStatus('');
+}
+$('bk-save').addEventListener('click', async () => {
+  saveCarFromForm();
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date());
+  const name = `repostaje-rocio-copia-${day}.json`;
+  const text = JSON.stringify(makeBackup(prefs, diaryEntries()), null, 1);
+  const done = how => {
+    prefs.lastBackup = Date.now(); savePrefs(); renderBackup();
+    backupStatus(`${how} Para recuperarla, aquí o en otro dispositivo: «Restaurar una copia».`);
+  };
+  // En el móvil se abre el menú de compartir (ahí está «Guardar en Archivos»): dentro de la app
+  // instalada una descarga normal no tiene dónde ir. En el ordenador, descarga corriente.
+  try {
+    const file = new File([text], name, { type: 'application/json' });
+    if ((isIOS || /Android/.test(UA)) && navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'Copia de Repostaje Rocío' });
+      return done('Copia lista: guárdala en «Archivos» o envíatela.');
+    }
+  } catch (err) {
+    if (err?.name === 'AbortError') return backupStatus('No se ha guardado la copia.');
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  done(`Copia guardada en tus descargas (${name}).`);
+});
+$('bk-load').addEventListener('click', () => $('bk-file').click());
+$('bk-file').addEventListener('change', async e => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    pendingBackup = parseBackup(await file.text());
+    const when = pendingBackup.saved ? ` del ${new Date(pendingBackup.saved).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}` : '';
+    backupStatus(`Copia${when}: ${describeBackup(pendingBackup)}. Al restaurarla se sustituye lo que hay ahora en este dispositivo.`);
+    $('bk-apply').hidden = false;
+  } catch (err) {
+    pendingBackup = null; $('bk-apply').hidden = true;
+    backupStatus(err.message || 'No se pudo leer el archivo.', true);
+  }
+});
+$('bk-apply').addEventListener('click', () => {
+  if (!pendingBackup) return;
+  try {
+    // El mapa sencillo es cosa de este dispositivo: no se toca.
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...pendingBackup.prefs, simpleMap: !!prefs.simpleMap, lastBackup: Date.now() }));
+    localStorage.setItem(LOG_KEY, JSON.stringify(pendingBackup.entries));
+    localStorage.removeItem(SEEN_KEY);
+  } catch { return backupStatus('Este navegador no deja guardar datos (¿modo privado?).', true); }
+  location.reload();
+});
 $('open-settings').addEventListener('click', openSettings);
 $('car-reset').addEventListener('click', () => fillCarForm(SANDERO));
 $('disc-list').addEventListener('click', e => {
